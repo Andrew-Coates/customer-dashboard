@@ -1,0 +1,607 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Deepgram Sales Dashboard</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif; background: #f5f7fa; padding: 20px; }
+        .header { background: white; padding: 25px 30px; border-radius: 10px; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
+        h1 { color: #1a1a1a; font-size: 28px; margin-bottom: 10px; }
+        .subtitle { color: #666; font-size: 14px; }
+        .controls { background: white; padding: 20px 30px; border-radius: 10px; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
+        .btn { background: #13EF93; color: #1a1a1a; border: none; padding: 10px 20px; border-radius: 6px; cursor: pointer; font-size: 14px; font-weight: 600; margin-right: 10px; transition: all 0.2s; }
+        .btn:hover { background: #0FD47F; transform: translateY(-1px); }
+        .btn-secondary { background: #e8eaed; color: #1a1a1a; }
+        .btn-secondary:hover { background: #d8dadd; }
+        .dashboard-container { background: white; padding: 20px; border-radius: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); margin-bottom: 20px; overflow-x: auto; }
+        table { width: 100%; border-collapse: collapse; font-size: 13px; }
+        thead { background: #f8f9fa; }
+        th { padding: 12px 8px; text-align: left; font-weight: 600; color: #333; border-bottom: 2px solid #e0e0e0; white-space: nowrap; cursor: pointer; user-select: none; position: relative; }
+        th:hover { background: #e8eaed; }
+        th.sortable::after { content: ' ⇅'; color: #ccc; font-size: 10px; }
+        th.sort-asc::after { content: ' ▲'; color: #13EF93; }
+        th.sort-desc::after { content: ' ▼'; color: #13EF93; }
+        td { padding: 10px 8px; border-bottom: 1px solid #f0f0f0; }
+        tr:hover { background: #f8f9fa; }
+        .product-tag { display: inline-block; padding: 3px 8px; border-radius: 4px; font-size: 11px; margin: 2px; font-weight: 500; }
+        .tag-batch { background: #E3F2FD; color: #1976D2; }
+        .tag-realtime { background: #E8F5E9; color: #388E3C; }
+        .tag-voice { background: #F3E5F5; color: #7B1FA2; }
+        .tag-flux { background: #FFF3E0; color: #F57C00; }
+        .tag-medical { background: #E0F2F1; color: #00796B; }
+        .tag-tts { background: #FCE4EC; color: #C2185B; }
+        .tag-language { background: #F3E5F5; color: #6A1B9A; }
+        .percentage-cell { font-weight: 600; padding: 6px 10px; border-radius: 4px; text-align: center; }
+        .status-green { background: #d4edda; color: #155724; }
+        .status-yellow { background: #fff3cd; color: #856404; }
+        .status-red { background: #f8d7da; color: #721c24; }
+        .currency { font-family: 'SF Mono', 'Monaco', 'Courier New', monospace; }
+        .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin-bottom: 20px; }
+        .stat-card { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 20px; border-radius: 8px; }
+        .stat-card:nth-child(2) { background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); }
+        .stat-card:nth-child(3) { background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%); }
+        .stat-card:nth-child(4) { background: linear-gradient(135deg, #43e97b 0%, #38f9d7 100%); }
+        .stat-label { font-size: 12px; opacity: 0.9; margin-bottom: 5px; }
+        .stat-value { font-size: 24px; font-weight: 700; }
+        .editable { cursor: pointer; position: relative; }
+        .editable:hover { background: #f0f0f0; outline: 2px solid #13EF93; outline-offset: -2px; }
+        .editing { background: white !important; }
+        .edit-input { width: 100%; border: 2px solid #13EF93; padding: 6px; font-size: 13px; font-family: inherit; box-sizing: border-box; }
+        .edit-textarea { width: 100%; min-height: 60px; border: 2px solid #13EF93; padding: 6px; font-size: 13px; font-family: inherit; box-sizing: border-box; }
+        .action-btn { background: none; border: none; cursor: pointer; padding: 4px 8px; color: #666; font-size: 16px; transition: color 0.2s; }
+        .action-btn:hover { color: #13EF93; }
+        .save-indicator { position: fixed; top: 20px; right: 20px; background: #13EF93; color: #1a1a1a; padding: 10px 20px; border-radius: 6px; font-weight: 600; display: none; animation: slideIn 0.3s; z-index: 1001; }
+        @keyframes slideIn { from { transform: translateX(100px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+        .modal { display: none; position: fixed; z-index: 1000; left: 0; top: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); }
+        .modal-content { background: white; margin: 10% auto; padding: 30px; border-radius: 10px; width: 90%; max-width: 500px; animation: slideDown 0.3s; }
+        @keyframes slideDown { from { transform: translateY(-50px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+        .close { color: #aaa; float: right; font-size: 28px; font-weight: bold; cursor: pointer; line-height: 20px; }
+        .close:hover { color: #000; }
+        .form-group { margin-bottom: 20px; }
+        label { display: block; margin-bottom: 6px; font-weight: 600; color: #333; font-size: 14px; }
+        input, select, textarea { width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 6px; font-size: 14px; font-family: inherit; }
+        input:focus, select:focus, textarea:focus { outline: none; border-color: #13EF93; }
+        .api-status { display: inline-block; padding: 4px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; margin-left: 8px; }
+        .api-loading { background: #FFF3CD; color: #856404; }
+        .api-success { background: #D4EDDA; color: #155724; }
+        .api-error { background: #F8D7DA; color: #721C24; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>🎯 Deepgram Sales Dashboard</h1>
+        <p class="subtitle">Customer billing & credit tracking | Prepaid consumption model</p>
+    </div>
+    
+    <div class="controls">
+        <button class="btn" onclick="addNewCustomer()">➕ Add Customer</button>
+        <button class="btn" onclick="showApiKeyModal()">🔑 Set API Key</button>
+        <button class="btn" onclick="refreshAllBalances()">🔄 Refresh All Balances</button>
+        <button class="btn btn-secondary" onclick="exportToCSV()">📊 Export CSV</button>
+        <button class="btn btn-secondary" onclick="resetData()">↩️ Reset to Original</button>
+    </div>
+    
+    <div class="save-indicator" id="saveIndicator">✓ Changes saved</div>
+    
+    <!-- API Key Modal -->
+    <div id="apiKeyModal" class="modal" style="display: none;">
+        <div class="modal-content" style="max-width: 500px;">
+            <span class="close" onclick="closeApiKeyModal()">&times;</span>
+            <h2 style="margin-bottom: 20px; color: #333;">Configure Deepgram API Key</h2>
+            <p style="color: #666; margin-bottom: 20px; font-size: 14px;">
+                Enter your Deepgram API key to fetch live balance data. The key will be stored locally in your browser.
+            </p>
+            <div class="form-group">
+                <label for="apiKeyInput">Deepgram API Key</label>
+                <input type="password" id="apiKeyInput" placeholder="Enter your API key" style="font-family: monospace;">
+            </div>
+            <div style="margin-top: 25px; display: flex; gap: 10px;">
+                <button class="btn" style="flex: 1;" onclick="saveApiKey()">Save API Key</button>
+                <button class="btn btn-secondary" onclick="closeApiKeyModal()">Cancel</button>
+            </div>
+        </div>
+    </div>
+    
+    <div class="stats-grid">
+        <div class="stat-card">
+            <div class="stat-label">Total Customers</div>
+            <div class="stat-value" id="totalCustomers">0</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-label">Total Contracted</div>
+            <div class="stat-value" id="totalContracted">$0</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-label">Total Remaining</div>
+            <div class="stat-value" id="totalRemaining">$0</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-label">At Risk (< 25%)</div>
+            <div class="stat-value" id="atRiskCount">0</div>
+        </div>
+    </div>
+    
+    <div class="dashboard-container">
+        <table id="customerTable">
+            <thead>
+                <tr>
+                    <th class="sortable" data-sort="name">Customer</th>
+                    <th class="sortable" data-sort="location">Location</th>
+                    <th class="sortable" data-sort="useCase">Use Case</th>
+                    <th>Products</th>
+                    <th class="sortable" data-sort="whitespace">Whitespace</th>
+                    <th class="sortable" data-sort="projectId">Project ID</th>
+                    <th class="sortable" data-sort="balanceId">Balance ID</th>
+                    <th class="sortable" data-sort="startDate">Start Date</th>
+                    <th class="sortable" data-sort="startingCredits">Starting Credits</th>
+                    <th class="sortable" data-sort="creditsRemaining">Credits Remaining</th>
+                    <th class="sortable" data-sort="percentage">%</th>
+                    <th class="sortable" data-sort="notes">Notes</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody id="customerTableBody"></tbody>
+        </table>
+    </div>
+    
+    <script>
+        const originalCustomers = [
+            { name: "Nova AI", location: "Ohio", useCase: "Voice Agent", products: ["Batch STT"], whitespace: "Medical, Language Expansion", projectId: "", balanceId: "", startDate: "1/24/25", startingCredits: 20000, creditsRemaining: 12879, notes: "1:1 match by EOM" },
+            { name: "Brightside", location: "San Francisco", useCase: "Ambient Medical", products: ["Batch STT", "Medical", "Language Expansion"], whitespace: "", projectId: "", balanceId: "", startDate: "2/28/25", startingCredits: 150000, creditsRemaining: 32000, notes: "billing discrepancy" },
+            { name: "Second Nature", location: "CA", useCase: "Mock Sales Voice Agent", products: ["Realtime STT", "Voice Agent API", "Flux", "TTS"], whitespace: "", projectId: "", balanceId: "", startDate: "6/26/25", startingCredits: 41000, creditsRemaining: 12945, notes: "self hosted" },
+            { name: "CareCo", location: "PA, US", useCase: "Ambient Scribe", products: ["Batch STT"], whitespace: "Medical, Language Expansion", projectId: "", balanceId: "", startDate: "2/10/25", startingCredits: 15000, creditsRemaining: 3124, notes: "" },
+            { name: "Authenticx", location: "Indianapolis", useCase: "Healthcare QA", products: ["Batch STT"], whitespace: "Medical, Language Expansion", projectId: "", balanceId: "", startDate: "4/1/24", startingCredits: 479000, creditsRemaining: 231751, notes: "nova-2-ea" },
+            { name: "Berribot", location: "Singapore", useCase: "Voice Agent / Recruiting", products: ["Realtime STT", "Voice Agent API", "Flux", "TTS"], whitespace: "", projectId: "", balanceId: "", startDate: "8/29/25", startingCredits: 10500, creditsRemaining: 7353, notes: "self hosted flux" },
+            { name: "Checkmate", location: "NY, NY", useCase: "Drive Thru AI", products: ["Realtime STT", "Voice Agent API", "Flux"], whitespace: "", projectId: "", balanceId: "", startDate: "3/21/25", startingCredits: 10000, creditsRemaining: 5161, notes: "custom model" },
+            { name: "Veed", location: "UK", useCase: "Video Tx", products: ["Batch STT", "Language Expansion"], whitespace: "", projectId: "", balanceId: "", startDate: "12/22/24", startingCredits: 8000, creditsRemaining: 4800, notes: "" },
+            { name: "Toma", location: "NY, NY", useCase: "Voice Agent (automotive)", products: ["Realtime STT", "Voice Agent API", "Flux", "TTS"], whitespace: "", projectId: "", balanceId: "", startDate: "9/19/25", startingCredits: 20277, creditsRemaining: 14471, notes: "" },
+            { name: "33n", location: "CA", useCase: "Ambient Scribe", products: ["Batch STT"], whitespace: "Medical, Language Expansion", projectId: "", balanceId: "", startDate: "5/2/25", startingCredits: 24000, creditsRemaining: 18000, notes: "" },
+            { name: "Kustomer", location: "New Jersey", useCase: "CX", products: ["Batch STT", "Voice Agent API"], whitespace: "", projectId: "", balanceId: "", startDate: "6/30/25", startingCredits: 33586, creditsRemaining: 26610, notes: "" },
+            { name: "Inceptia", location: "Argentina", useCase: "Voice Agent", products: ["Realtime STT", "Voice Agent API", "Language Expansion", "Flux"], whitespace: "", projectId: "", balanceId: "", startDate: "4/18/25", startingCredits: 88333, creditsRemaining: 73070, notes: "" },
+            { name: "Kindroid", location: "LA, CA", useCase: "Voice Agent / Entertainment", products: ["Realtime STT", "Flux"], whitespace: "", projectId: "", balanceId: "", startDate: "2/5/25", startingCredits: 19000, creditsRemaining: 16377, notes: "" },
+            { name: "iScribe Health", location: "Nashville, TN", useCase: "Ambient Medical", products: ["Batch STT", "Medical", "Language Expansion"], whitespace: "", projectId: "", balanceId: "", startDate: "7/25/25", startingCredits: 166000, creditsRemaining: 146388, notes: "" },
+            { name: "Mercor", location: "San Francisco", useCase: "Voice Agent / Recruiting", products: ["Realtime STT", "Voice Agent API", "Flux", "TTS"], whitespace: "", projectId: "", balanceId: "", startDate: "10/1/25", startingCredits: 68731, creditsRemaining: 61253, notes: "" },
+            { name: "ContactUs", location: "Ohio", useCase: "CX", products: ["Batch STT"], whitespace: "", projectId: "", balanceId: "", startDate: "3/30/25", startingCredits: 10000, creditsRemaining: 9129, notes: "" },
+            { name: "IDEXX", location: "Maine", useCase: "Ambient Medical", products: ["Batch STT", "Medical"], whitespace: "", projectId: "", balanceId: "", startDate: "7/28/25", startingCredits: 55540, creditsRemaining: 50826, notes: "" },
+            { name: "Because Mkt", location: "CA", useCase: "Internal CX", products: ["Batch STT", "Voice Agent API"], whitespace: "", projectId: "", balanceId: "", startDate: "8/29/25", startingCredits: 15000, creditsRemaining: 14323, notes: "" },
+            { name: "Asurion", location: "Nashville, TN", useCase: "Customer Service", products: ["Realtime STT"], whitespace: "", projectId: "", balanceId: "", startDate: "1/1/25", startingCredits: 1074736, creditsRemaining: 1058000, notes: "" },
+            { name: "Voxy", location: "Miami, FL", useCase: "CX", products: ["Realtime STT", "Language Expansion", "Flux"], whitespace: "", projectId: "", balanceId: "", startDate: "9/1/25", startingCredits: 83800, creditsRemaining: 82800, notes: "" },
+            { name: "Phenom", location: "PA, US", useCase: "Voice Agent / Recruiting", products: ["Realtime STT", "Voice Agent API", "Flux", "TTS"], whitespace: "", projectId: "", balanceId: "", startDate: "8/21/25", startingCredits: 14550, creditsRemaining: 14443, notes: "" },
+            { name: "Spearfish", location: "Ohio", useCase: "CX", products: ["Batch STT"], whitespace: "", projectId: "", balanceId: "", startDate: "9/19/25", startingCredits: 50000, creditsRemaining: 49908, notes: "" },
+            { name: "Chegg", location: "Santa Clara, CA", useCase: "Voice Agent / tutor", products: ["Realtime STT", "Voice Agent API", "Flux", "TTS"], whitespace: "", projectId: "", balanceId: "", startDate: "8/21/25", startingCredits: 24000, creditsRemaining: 23979, notes: "" },
+            { name: "Yung", location: "Miami, FL", useCase: "Therapy notes", products: ["Batch STT"], whitespace: "", projectId: "", balanceId: "", startDate: "10/16/24", startingCredits: 15820, creditsRemaining: 15820, notes: "" },
+            { name: "Talkative", location: "UK", useCase: "CX Video call", products: ["Realtime STT", "Voice Agent API", "Flux", "TTS"], whitespace: "", projectId: "", balanceId: "", startDate: "9/29/25", startingCredits: 32400, creditsRemaining: 32400, notes: "" },
+            { name: "Ninja Notes", location: "Texas", useCase: "Ambient Scribe", products: ["Batch STT"], whitespace: "", projectId: "", balanceId: "", startDate: "7/18/25", startingCredits: 40000, creditsRemaining: 40000, notes: "24 month" },
+            { name: "ITEC", location: "Colorado", useCase: "Medical Translation", products: ["Realtime STT", "Flux", "Language Expansion", "Medical"], whitespace: "", projectId: "", balanceId: "", startDate: "10/7/25", startingCredits: 105000, creditsRemaining: 105000, notes: "Making new model" }
+        ];
+        
+        let customers = [];
+        let sortColumn = null;
+        let sortDirection = 'asc';
+        
+        // Load from localStorage or use original data
+        function loadData() {
+            const saved = localStorage.getItem('deepgramCustomers');
+            if (saved) {
+                try {
+                    customers = JSON.parse(saved);
+                } catch (e) {
+                    customers = [...originalCustomers];
+                }
+            } else {
+                customers = [...originalCustomers];
+            }
+        }
+        
+        function saveData() {
+            localStorage.setItem('deepgramCustomers', JSON.stringify(customers));
+            showSaveIndicator();
+        }
+        
+        function showSaveIndicator() {
+            const indicator = document.getElementById('saveIndicator');
+            indicator.style.display = 'block';
+            setTimeout(() => {
+                indicator.style.display = 'none';
+            }, 2000);
+        }
+        
+        function makeEditable(cell, customerIndex, field) {
+            if (cell.querySelector('input') || cell.querySelector('textarea')) return;
+            
+            const currentValue = customers[customerIndex][field];
+            const isNumber = field === 'startingCredits' || field === 'creditsRemaining';
+            const isLongText = field === 'notes';
+            
+            cell.classList.add('editing');
+            
+            let input;
+            if (isLongText) {
+                input = document.createElement('textarea');
+                input.className = 'edit-textarea';
+            } else {
+                input = document.createElement('input');
+                input.className = 'edit-input';
+                if (isNumber) input.type = 'number';
+            }
+            
+            input.value = currentValue || '';
+            
+            const originalContent = cell.innerHTML;
+            cell.innerHTML = '';
+            cell.appendChild(input);
+            input.focus();
+            if (!isLongText) input.select();
+            
+            function saveEdit() {
+                let newValue = input.value;
+                if (isNumber) {
+                    newValue = parseFloat(newValue) || 0;
+                }
+                customers[customerIndex][field] = newValue;
+                saveData();
+                renderTable();
+                updateStats();
+            }
+            
+            function cancelEdit() {
+                cell.innerHTML = originalContent;
+                cell.classList.remove('editing');
+            }
+            
+            input.addEventListener('blur', saveEdit);
+            input.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    saveEdit();
+                } else if (e.key === 'Escape') {
+                    cancelEdit();
+                }
+            });
+        }
+        
+        function deleteCustomer(index) {
+            if (confirm(`Delete ${customers[index].name}?`)) {
+                customers.splice(index, 1);
+                saveData();
+                renderTable();
+                updateStats();
+            }
+        }
+        
+        function addNewCustomer() {
+            const newCustomer = {
+                name: "New Customer",
+                location: "",
+                useCase: "Voice Agent",
+                products: ["Batch STT"],
+                whitespace: "",
+                projectId: "",
+                balanceId: "",
+                startDate: new Date().toLocaleDateString('en-US', { month: 'numeric', day: 'numeric', year: '2-digit' }),
+                startingCredits: 10000,
+                creditsRemaining: 10000,
+                notes: ""
+            };
+            customers.unshift(newCustomer);
+            saveData();
+            renderTable();
+            updateStats();
+        }
+        
+        // API Key Management
+        function showApiKeyModal() {
+            const modal = document.getElementById('apiKeyModal');
+            const input = document.getElementById('apiKeyInput');
+            const existingKey = localStorage.getItem('deepgramApiKey');
+            if (existingKey) {
+                input.value = existingKey;
+            }
+            modal.style.display = 'block';
+        }
+        
+        function closeApiKeyModal() {
+            document.getElementById('apiKeyModal').style.display = 'none';
+        }
+        
+        function saveApiKey() {
+            const apiKey = document.getElementById('apiKeyInput').value.trim();
+            if (apiKey) {
+                localStorage.setItem('deepgramApiKey', apiKey);
+                showSaveIndicator();
+                closeApiKeyModal();
+                alert('API Key saved successfully! You can now refresh balances from Deepgram.');
+            } else {
+                alert('Please enter a valid API key.');
+            }
+        }
+        
+        // Fetch balance from Deepgram API
+        async function fetchBalance(projectId, balanceId, customerIndex) {
+            const apiKey = localStorage.getItem('deepgramApiKey');
+            if (!apiKey) {
+                alert('Please set your Deepgram API key first (click 🔑 Set API Key)');
+                return null;
+            }
+            
+            if (!projectId || !balanceId) {
+                return null;
+            }
+            
+            try {
+                const url = `https://api.deepgram.com/v1/projects/${projectId}/balances/${balanceId}`;
+                const response = await fetch(url, {
+                    method: 'GET',
+                    headers: {
+                        'Authorization': `Token ${apiKey}`,
+                        'Content-Type': 'application/json'
+                    }
+                });
+                
+                if (!response.ok) {
+                    throw new Error(`API Error: ${response.status} ${response.statusText}`);
+                }
+                
+                const data = await response.json();
+                return data;
+            } catch (error) {
+                console.error('Error fetching balance:', error);
+                return { error: error.message };
+            }
+        }
+        
+        async function refreshBalance(customerIndex) {
+            const customer = customers[customerIndex];
+            
+            if (!customer.projectId || !customer.balanceId) {
+                alert(`Please add Project ID and Balance ID for ${customer.name} first (click to edit the cells)`);
+                return;
+            }
+            
+            // Show loading indicator
+            const row = document.querySelectorAll('#customerTableBody tr')[customerIndex];
+            if (row) {
+                const actionsCell = row.querySelector('td:last-child');
+                const originalHtml = actionsCell.innerHTML;
+                actionsCell.innerHTML += '<span class="api-status api-loading">Loading...</span>';
+                
+                const balanceData = await fetchBalance(customer.projectId, customer.balanceId, customerIndex);
+                
+                if (balanceData && !balanceData.error) {
+                    // Update credits remaining with the API data
+                    customers[customerIndex].creditsRemaining = balanceData.amount || 0;
+                    saveData();
+                    renderTable();
+                    updateStats();
+                    actionsCell.innerHTML = originalHtml + '<span class="api-status api-success">✓ Updated</span>';
+                    setTimeout(() => {
+                        renderTable();
+                    }, 2000);
+                } else {
+                    actionsCell.innerHTML = originalHtml + `<span class="api-status api-error">Error: ${balanceData?.error || 'Failed'}</span>`;
+                    setTimeout(() => {
+                        renderTable();
+                    }, 3000);
+                }
+            }
+        }
+        
+        async function refreshAllBalances() {
+            const apiKey = localStorage.getItem('deepgramApiKey');
+            if (!apiKey) {
+                alert('Please set your Deepgram API key first (click 🔑 Set API Key)');
+                return;
+            }
+            
+            const customersWithIds = customers.filter(c => c.projectId && c.balanceId);
+            
+            if (customersWithIds.length === 0) {
+                alert('No customers have both Project ID and Balance ID set. Please add these IDs first by clicking on the cells.');
+                return;
+            }
+            
+            if (!confirm(`Refresh balances for ${customersWithIds.length} customer(s)?`)) {
+                return;
+            }
+            
+            let successCount = 0;
+            let errorCount = 0;
+            
+            for (let i = 0; i < customers.length; i++) {
+                const customer = customers[i];
+                if (customer.projectId && customer.balanceId) {
+                    const balanceData = await fetchBalance(customer.projectId, customer.balanceId, i);
+                    if (balanceData && !balanceData.error) {
+                        customers[i].creditsRemaining = balanceData.amount || 0;
+                        successCount++;
+                    } else {
+                        errorCount++;
+                    }
+                }
+            }
+            
+            saveData();
+            renderTable();
+            updateStats();
+            
+            alert(`Balance refresh complete!\n✓ Success: ${successCount}\n✗ Errors: ${errorCount}`);
+        }
+        
+        function resetData() {
+            if (confirm('Reset all data to original values? This will delete any changes you made.')) {
+                localStorage.removeItem('deepgramCustomers');
+                loadData();
+                renderTable();
+                updateStats();
+                showSaveIndicator();
+            }
+        }
+        
+        function sortTable(column) {
+            // Toggle sort direction if clicking the same column
+            if (sortColumn === column) {
+                sortDirection = sortDirection === 'asc' ? 'desc' : 'asc';
+            } else {
+                sortColumn = column;
+                sortDirection = 'asc';
+            }
+            
+            customers.sort((a, b) => {
+                let aVal = a[column];
+                let bVal = b[column];
+                
+                // Special handling for percentage
+                if (column === 'percentage') {
+                    aVal = (a.creditsRemaining / a.startingCredits) * 100;
+                    bVal = (b.creditsRemaining / b.startingCredits) * 100;
+                }
+                
+                // Handle numbers
+                if (column === 'startingCredits' || column === 'creditsRemaining' || column === 'percentage') {
+                    aVal = parseFloat(aVal) || 0;
+                    bVal = parseFloat(bVal) || 0;
+                }
+                
+                // Handle dates
+                if (column === 'startDate') {
+                    aVal = new Date(aVal);
+                    bVal = new Date(bVal);
+                }
+                
+                // Handle strings (case insensitive)
+                if (typeof aVal === 'string') {
+                    aVal = aVal.toLowerCase();
+                    bVal = (bVal || '').toLowerCase();
+                }
+                
+                let comparison = 0;
+                if (aVal > bVal) comparison = 1;
+                if (aVal < bVal) comparison = -1;
+                
+                return sortDirection === 'asc' ? comparison : -comparison;
+            });
+            
+            renderTable();
+            updateSortIndicators();
+        }
+        
+        function updateSortIndicators() {
+            // Remove all sort classes
+            document.querySelectorAll('th').forEach(th => {
+                th.classList.remove('sort-asc', 'sort-desc');
+            });
+            
+            // Add sort class to active column
+            if (sortColumn) {
+                const th = document.querySelector(`th[data-sort="${sortColumn}"]`);
+                if (th) {
+                    th.classList.add(sortDirection === 'asc' ? 'sort-asc' : 'sort-desc');
+                }
+            }
+        }
+        
+        function renderTable() {
+            const tbody = document.getElementById('customerTableBody');
+            tbody.innerHTML = '';
+            
+            customers.forEach((c, index) => {
+                const pct = (c.creditsRemaining / c.startingCredits) * 100;
+                let statusClass = 'status-green';
+                if (pct < 25) statusClass = 'status-red';
+                else if (pct < 50) statusClass = 'status-yellow';
+                
+                const productsHtml = c.products.map(p => {
+                    let tagClass = 'tag-batch';
+                    if (p.includes('Realtime')) tagClass = 'tag-realtime';
+                    else if (p.includes('Voice')) tagClass = 'tag-voice';
+                    else if (p.includes('Flux')) tagClass = 'tag-flux';
+                    else if (p.includes('Medical')) tagClass = 'tag-medical';
+                    else if (p.includes('TTS')) tagClass = 'tag-tts';
+                    else if (p.includes('Language')) tagClass = 'tag-language';
+                    return `<span class="product-tag ${tagClass}">${p}</span>`;
+                }).join('');
+                
+                const row = document.createElement('tr');
+                row.innerHTML = `
+                    <td class="editable"><strong>${c.name}</strong></td>
+                    <td class="editable">${c.location}</td>
+                    <td class="editable">${c.useCase}</td>
+                    <td>${productsHtml}</td>
+                    <td class="editable">${c.whitespace || '-'}</td>
+                    <td class="editable" style="font-size: 11px; font-family: monospace;">${c.projectId || '-'}</td>
+                    <td class="editable" style="font-size: 11px; font-family: monospace;">${c.balanceId || '-'}</td>
+                    <td class="editable">${c.startDate}</td>
+                    <td class="editable currency">$${c.startingCredits.toLocaleString()}</td>
+                    <td class="editable currency">$${c.creditsRemaining.toLocaleString()}</td>
+                    <td><div class="percentage-cell ${statusClass}">${pct.toFixed(0)}%</div></td>
+                    <td class="editable">${c.notes || '-'}</td>
+                    <td style="white-space: nowrap;">
+                        <button class="action-btn" onclick="refreshBalance(${index})" title="Refresh from API">🔄</button>
+                        <button class="action-btn" onclick="deleteCustomer(${index})" title="Delete">🗑️</button>
+                    </td>
+                `;
+                
+                // Add click handlers for editable cells
+                const editableCells = row.querySelectorAll('.editable');
+                const fields = ['name', 'location', 'useCase', 'whitespace', 'projectId', 'balanceId', 'startDate', 'startingCredits', 'creditsRemaining', 'notes'];
+                editableCells.forEach((cell, cellIndex) => {
+                    if (cellIndex < fields.length) {
+                        cell.addEventListener('click', () => makeEditable(cell, index, fields[cellIndex]));
+                    }
+                });
+                
+                tbody.appendChild(row);
+            });
+        }
+        
+        function updateStats() {
+            document.getElementById('totalCustomers').textContent = customers.length;
+            
+            const totalContracted = customers.reduce((sum, c) => sum + c.startingCredits, 0);
+            document.getElementById('totalContracted').textContent = '$' + (totalContracted / 1000000).toFixed(2) + 'M';
+            
+            const totalRemaining = customers.reduce((sum, c) => sum + c.creditsRemaining, 0);
+            document.getElementById('totalRemaining').textContent = '$' + (totalRemaining / 1000000).toFixed(2) + 'M';
+            
+            const atRisk = customers.filter(c => {
+                const pct = (c.creditsRemaining / c.startingCredits) * 100;
+                return pct < 25;
+            }).length;
+            document.getElementById('atRiskCount').textContent = atRisk;
+        }
+        
+        function exportToCSV() {
+            let csv = 'Customer,Location,Use Case,Products,Whitespace,Start Date,Starting Credits,Credits Remaining,Percentage,Notes\\n';
+            
+            customers.forEach(c => {
+                const percentage = ((c.creditsRemaining / c.startingCredits) * 100).toFixed(2);
+                const products = c.products.join('; ');
+                csv += `"${c.name}","${c.location}","${c.useCase}","${products}","${c.whitespace}","${c.startDate}",${c.startingCredits},${c.creditsRemaining},${percentage},"${c.notes}"\\n`;
+            });
+            
+            const blob = new Blob([csv], { type: 'text/csv' });
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `deepgram-dashboard-${new Date().toISOString().split('T')[0]}.csv`;
+            a.click();
+        }
+        
+        // Initialize
+        loadData();
+        renderTable();
+        updateStats();
+        
+        // Add click handlers to sortable headers
+        document.querySelectorAll('th.sortable').forEach(th => {
+            th.addEventListener('click', () => {
+                const column = th.getAttribute('data-sort');
+                sortTable(column);
+            });
+        });
+    </script>
+</body>
+</html>
