@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Deepgram Sales Dashboard</title>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@2.2.1/dist/chartjs-plugin-annotation.min.js"></script>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <style>
@@ -103,18 +104,71 @@
     <div class="header">
         <h1>🎯 Deepgram Sales Dashboard</h1>
         <p class="subtitle">Customer billing & credit tracking | Prepaid consumption model</p>
+        <div id="userInfo" style="margin-top: 10px; font-size: 12px; color: #999;">
+            <span id="dataOwner"></span>
+        </div>
     </div>
     
     <div class="controls">
         <button class="btn" onclick="addNewCustomer()">➕ Add Customer</button>
         <button class="btn" onclick="addNewProspect()">🎯 Add Prospect</button>
+        <button class="btn" onclick="showImportModal()">📥 Import from Salesforce</button>
         <button class="btn" onclick="showApiKeyModal()">🔑 Set API Key</button>
         <button class="btn" onclick="refreshAllBalances()">🔄 Refresh All Balances</button>
         <button class="btn btn-secondary" onclick="exportToCSV()">📊 Export CSV</button>
-        <button class="btn btn-secondary" onclick="resetData()">↩️ Reset to Original</button>
+        <button class="btn btn-secondary" onclick="clearMyData()">🗑️ Clear My Data</button>
     </div>
     
     <div class="save-indicator" id="saveIndicator">✓ Changes saved</div>
+    
+    <!-- Import Modal -->
+    <div id="importModal" class="modal" style="display: none;">
+        <div class="modal-content" style="max-width: 700px; max-height: 85vh; overflow-y: auto;">
+            <span class="close" onclick="closeImportModal()">&times;</span>
+            <h2 style="margin-bottom: 20px; color: #333;">📥 Import Customer Data</h2>
+            
+            <div style="background: #e8f5e9; padding: 15px; border-radius: 8px; margin-bottom: 20px; border-left: 4px solid #4caf50;">
+                <h3 style="margin: 0 0 10px 0; font-size: 14px; color: #2e7d32;">How to Import from Salesforce:</h3>
+                <ol style="margin: 0; padding-left: 20px; font-size: 13px; color: #333; line-height: 1.8;">
+                    <li>Go to Salesforce and create a report with your customers</li>
+                    <li>Export the report as <strong>CSV</strong></li>
+                    <li>Upload the CSV file below (or paste the data)</li>
+                    <li>Map the columns to match the dashboard fields</li>
+                </ol>
+                <div style="background: rgba(19, 239, 147, 0.1); padding: 10px; border-radius: 6px; margin-top: 10px; border: 1px solid #13EF93;">
+                    <div style="font-size: 12px; color: #2e7d32; font-weight: 600; margin-bottom: 4px;">🔗 API-Ready Fields (Auto-populate in future):</div>
+                    <div style="font-size: 11px; color: #666;">
+                        <strong>From Salesforce API:</strong> Account Owner, Location, Products, ARR, Start Date, Contract End, Starting Credits<br>
+                        <strong>From Deepgram API:</strong> Credits Remaining, Balance ID, Current Concurrency
+                    </div>
+                </div>
+            </div>
+            
+            <div class="form-group">
+                <label for="csvFileInput">Upload CSV File</label>
+                <input type="file" id="csvFileInput" accept=".csv" onchange="handleCSVUpload(event)" style="padding: 10px; border: 2px dashed #ddd;">
+            </div>
+            
+            <div style="text-align: center; margin: 15px 0; color: #999;">— OR —</div>
+            
+            <div class="form-group">
+                <label for="csvTextInput">Paste CSV Data</label>
+                <textarea id="csvTextInput" rows="10" placeholder="Paste your CSV data here (with headers)&#10;Example:&#10;Customer Name,Location,Use Case,Starting Credits,Credits Remaining..." style="font-family: monospace; font-size: 12px;"></textarea>
+            </div>
+            
+            <div class="form-group">
+                <label>
+                    <input type="checkbox" id="replaceData" style="width: auto; margin-right: 8px;">
+                    Replace all existing data (otherwise, will append to current customers)
+                </label>
+            </div>
+            
+            <div style="margin-top: 25px; display: flex; gap: 10px;">
+                <button class="btn" style="flex: 1;" onclick="processImport()">Import Data</button>
+                <button class="btn btn-secondary" onclick="closeImportModal()">Cancel</button>
+            </div>
+        </div>
+    </div>
     
     <!-- API Key Modal -->
     <div id="apiKeyModal" class="modal" style="display: none;">
@@ -141,7 +195,7 @@
             <div class="stat-value" id="totalCustomers">0</div>
         </div>
         <div class="stat-card">
-            <div class="stat-label">Total Contracted</div>
+            <div class="stat-label">Total ARR</div>
             <div class="stat-value" id="totalContracted">$0</div>
         </div>
         <div class="stat-card">
@@ -156,10 +210,10 @@
     
     <div class="tabs">
         <div class="tab active" onclick="switchTab('customers')">👥 Customers</div>
+        <div class="tab" onclick="switchTab('trends')">📈 Usage Trends</div>
         <div class="tab" onclick="switchTab('prospects')">🎯 Prospects</div>
         <div class="tab" onclick="switchTab('concurrency')">⚡ Concurrency</div>
         <div class="tab" onclick="switchTab('map')">🗺️ Map View</div>
-        <div class="tab" onclick="switchTab('trends')">📈 Usage Trends</div>
     </div>
     
     <div id="customersView" class="tab-content active">
@@ -172,16 +226,18 @@
                 <thead>
                     <tr>
                         <th class="sortable" data-sort="name">Customer</th>
-                        <th class="sortable" data-sort="location">Location</th>
+                        <th class="sortable" data-sort="accountOwner" title="API: Salesforce">Owner <span style="color: #13EF93; font-size: 9px;">🔗</span></th>
+                        <th class="sortable" data-sort="location" title="API: Salesforce">Location <span style="color: #13EF93; font-size: 9px;">🔗</span></th>
                         <th class="sortable" data-sort="useCase">Use Case</th>
-                        <th>Products</th>
+                        <th title="API: Salesforce">Products <span style="color: #13EF93; font-size: 9px;">🔗</span></th>
+                        <th class="sortable" data-sort="arr" title="API: Salesforce">ARR <span style="color: #13EF93; font-size: 9px;">🔗</span></th>
                         <th class="sortable" data-sort="whitespace">Whitespace</th>
                         <th class="sortable" data-sort="projectId">Project ID</th>
                         <th class="sortable" data-sort="balanceId">Balance ID</th>
-                        <th class="sortable" data-sort="startDate">Start Date</th>
-                        <th class="sortable" data-sort="contractEndDate">Contract End Date</th>
-                        <th class="sortable" data-sort="startingCredits">Starting Credits</th>
-                        <th class="sortable" data-sort="creditsRemaining">Credits Remaining</th>
+                        <th class="sortable" data-sort="startDate" title="API: Salesforce">Start Date <span style="color: #13EF93; font-size: 9px;">🔗</span></th>
+                        <th class="sortable" data-sort="contractEndDate" title="API: Salesforce">Contract End <span style="color: #13EF93; font-size: 9px;">🔗</span></th>
+                        <th class="sortable" data-sort="startingCredits" title="API: Salesforce">Starting Credits <span style="color: #13EF93; font-size: 9px;">🔗</span></th>
+                        <th class="sortable" data-sort="creditsRemaining" title="API: Deepgram Balance">Credits Remaining <span style="color: #13EF93; font-size: 9px;">🔗</span></th>
                         <th class="sortable" data-sort="percentage">%</th>
                         <th class="sortable" data-sort="notes">Notes</th>
                         <th>Actions</th>
@@ -216,6 +272,7 @@
                         <th class="sortable" data-sort="peakConcurrency" id="peakHeader">Peak (24h)</th>
                         <th class="sortable" data-sort="utilizationPct">Utilization %</th>
                         <th>Products</th>
+                        <th>Rill Analytics</th>
                         <th class="sortable" data-sort="notes">Notes</th>
                         <th>Actions</th>
                     </tr>
@@ -239,6 +296,7 @@
                         <th class="sortable" data-sort="name">Customer</th>
                         <th class="sortable" data-sort="concurrencyLimit">Concurrency Limit</th>
                         <th>Products</th>
+                        <th>Rill Analytics</th>
                         <th class="sortable" data-sort="notes">Notes</th>
                         <th>Actions</th>
                     </tr>
@@ -277,7 +335,21 @@
     
     <div id="mapView" class="tab-content">
         <div class="map-container">
-            <h2 style="margin-bottom: 15px; color: #333;">Customer Locations</h2>
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+                <h2 style="margin: 0; color: #333;">Customer Locations</h2>
+                <div style="display: flex; gap: 10px; align-items: center;">
+                    <span style="font-size: 13px; color: #666; font-weight: 600;">Filter:</span>
+                    <button id="filterGreen" class="btn" onclick="toggleMapFilter('green')" style="padding: 6px 12px; font-size: 12px; background: #d4edda; color: #155724; border: 2px solid #155724;">
+                        ✓ Green (>50%)
+                    </button>
+                    <button id="filterYellow" class="btn" onclick="toggleMapFilter('yellow')" style="padding: 6px 12px; font-size: 12px; background: #fff3cd; color: #856404; border: 2px solid #856404;">
+                        ✓ Yellow (25-50%)
+                    </button>
+                    <button id="filterRed" class="btn" onclick="toggleMapFilter('red')" style="padding: 6px 12px; font-size: 12px; background: #f8d7da; color: #721c24; border: 2px solid #721c24;">
+                        ✓ Red (<25%)
+                    </button>
+                </div>
+            </div>
             <div id="map"></div>
         </div>
     </div>
@@ -285,33 +357,81 @@
     <div id="trendsView" class="tab-content">
         <div class="chart-container">
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
-                <h2 style="margin: 0; color: #333;">My Account Usage by Month</h2>
+                <h2 style="margin: 0; color: #333;">📊 Customer Usage Analysis & Upsell Opportunities</h2>
                 <div style="display: flex; gap: 10px; align-items: center;">
-                    <button class="btn btn-secondary" onclick="selectAllCustomers()" style="font-size: 12px; padding: 6px 12px;">Select All</button>
-                    <button class="btn btn-secondary" onclick="deselectAllCustomers()" style="font-size: 12px; padding: 6px 12px;">Deselect All</button>
+                    <label style="font-size: 13px; color: #666;">Usage Since:</label>
+                    <select id="dateRangeSelect" onchange="updateDateRange(this.value)" style="padding: 6px 10px; border: 1px solid #ddd; border-radius: 6px; font-size: 13px;">
+                        <option value="week">Last Week</option>
+                        <option value="month">Last Month</option>
+                        <option value="quarter">Last Quarter</option>
+                        <option value="ytd">Year to Date</option>
+                        <option value="contract" selected>Contract Start to Date</option>
+                        <option value="custom">Custom Date...</option>
+                    </select>
+                    <input type="date" id="customDatePicker" style="padding: 6px 10px; border: 1px solid #ddd; border-radius: 6px; font-size: 13px; display: none;" onchange="applyCustomDate(this.value)">
                 </div>
             </div>
-            <div style="display: flex; gap: 20px; margin-bottom: 20px;">
-                <div style="flex: 1; max-height: 500px; overflow-y: auto; padding: 15px; background: #f8f9fa; border-radius: 8px;">
-                    <h3 style="margin-top: 0; font-size: 14px; color: #333;">Filter Customers</h3>
-                    <div style="margin-bottom: 15px;">
-                        <input type="text" id="customerSearch" placeholder="🔍 Search customers..." style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 6px; font-size: 13px; margin-bottom: 10px;" oninput="filterCustomerList(this.value)">
-                        <div class="customer-filter" style="border-bottom: 1px solid #ddd; padding-bottom: 8px; margin-bottom: 8px;">
-                            <input type="checkbox" id="selectAllCheckbox" onchange="toggleAllCustomers(this.checked)" checked>
-                            <label for="selectAllCheckbox" style="font-weight: 600;">Select All (<span id="selectedCount">0</span>)</label>
-                        </div>
-                    </div>
-                    <div id="customerFilters" style="display: grid; grid-template-columns: 1fr; gap: 4px; font-size: 12px;"></div>
-                </div>
-                <div style="flex: 3;">
-                    <div class="chart-wrapper" style="height: 500px;">
-                        <canvas id="trendsChart"></canvas>
+            
+            <div id="customerProductBreakdown" style="background: #f8f9fa; padding: 15px; border-radius: 8px; margin-bottom: 15px; display: none;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+                    <h3 style="margin: 0; font-size: 16px; color: #333;" id="selectedCustomerName">Customer Details</h3>
+                    <div style="display: flex; gap: 10px;">
+                        <button class="btn" onclick="generateUpsellSummary()" style="padding: 6px 12px; font-size: 12px;">🤖 Generate Upsell Summary</button>
+                        <button class="btn btn-secondary" onclick="exportCustomerReport()" style="padding: 6px 12px; font-size: 12px;">📄 Export Report</button>
+                        <button class="btn btn-secondary" onclick="closeCustomerDetails()" style="padding: 4px 12px; font-size: 12px;">✕ Close</button>
                     </div>
                 </div>
+                <div id="aiSummary" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 15px; border-radius: 8px; margin-bottom: 15px; display: none;">
+                    <h4 style="margin: 0 0 10px 0; font-size: 14px; display: flex; align-items: center; gap: 8px;">
+                        <span>🤖 AI Upsell Summary</span>
+                        <button onclick="copyToClipboard(document.getElementById('summaryText').textContent)" style="background: rgba(255,255,255,0.2); border: none; color: white; padding: 4px 8px; border-radius: 4px; cursor: pointer; font-size: 11px;">📋 Copy</button>
+                    </h4>
+                    <div id="summaryText" style="font-size: 13px; line-height: 1.6; white-space: pre-wrap;"></div>
+                </div>
+                <div id="productBreakdownContent"></div>
             </div>
-            <div style="margin-top: 20px; padding: 15px; background: #fff3cd; border-left: 4px solid #ffc107; border-radius: 8px;">
-                <h3 style="margin-top: 0; font-size: 14px; color: #333;">⚠️ Projected Zero Dates</h3>
-                <div id="zeroProjections" style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; font-size: 12px;"></div>
+            
+            <div style="background: white; padding: 15px; border-radius: 8px; margin-bottom: 15px;">
+                <h3 style="margin: 0 0 10px 0; font-size: 14px; color: #333;">📊 Product Category Spend Trends</h3>
+                <div class="chart-wrapper" style="height: 350px;">
+                    <canvas id="productCategoryChart"></canvas>
+                </div>
+                <p style="font-size: 11px; color: #666; margin-top: 10px;">💡 Shows total monthly spend across all customers by product type (STT, TTS, Voice Agent)</p>
+            </div>
+            
+            <h3 style="margin-bottom: 10px; color: #333;">🎯 Customer Priority List - Click to Analyze Individual Customer</h3>
+            <div style="background: white; padding: 15px; border-radius: 8px;">
+                <div style="margin-bottom: 15px; display: flex; gap: 10px; align-items: center;">
+                    <input type="text" id="prioritySearch" placeholder="🔍 Search customers..." style="flex: 1; padding: 8px; border: 1px solid #ddd; border-radius: 6px; font-size: 13px;" oninput="filterPriorityList(this.value)">
+                    <select id="sortPriority" onchange="renderPriorityTable()" style="padding: 8px; border: 1px solid #ddd; border-radius: 6px; font-size: 13px;">
+                        <option value="urgency">Sort: Most Urgent</option>
+                        <option value="percentage">Sort: Lowest % Remaining</option>
+                        <option value="value">Sort: Highest Value</option>
+                        <option value="overage">Sort: Highest Overage Risk</option>
+                        <option value="credits">Sort: Lowest Credits</option>
+                    </select>
+                </div>
+                <div style="overflow-x: auto;">
+                    <table id="priorityTable" style="width: 100%;">
+                        <thead>
+                            <tr>
+                                <th>Priority</th>
+                                <th>Customer</th>
+                                <th>Project ID</th>
+                                <th>Console</th>
+                                <th>Credits Remaining</th>
+                                <th>%</th>
+                                <th>Zero Date</th>
+                                <th>Days to Zero</th>
+                                <th>Contract End</th>
+                                <th>Overage Risk</th>
+                                <th>12mo Upsell</th>
+                                <th>Action</th>
+                            </tr>
+                        </thead>
+                        <tbody id="priorityTableBody"></tbody>
+                    </table>
+                </div>
             </div>
         </div>
         
@@ -331,12 +451,12 @@
     
     <script>
         const originalCustomers = [
-            { name: "Nova AI", location: "Ohio", useCase: "Voice Agent", products: ["Batch STT"], whitespace: "Medical, Language Expansion", projectId: "", balanceId: "", startDate: "1/24/25", contractEndDate: "1/24/26", startingCredits: 20000, creditsRemaining: 12879, isHosted: true, concurrencyLimit: 50, currentConcurrency: 32, peak24h: 45, peak7d: 48, peak30d: 50, peak90d: 50, peakAll: 50, notes: "1:1 match by EOM" },
-            { name: "Brightside", location: "San Francisco", useCase: "Ambient Medical", products: ["Batch STT", "Medical", "Language Expansion"], whitespace: "", projectId: "", balanceId: "", startDate: "2/28/25", contractEndDate: "2/28/26", startingCredits: 150000, creditsRemaining: 32000, isHosted: true, concurrencyLimit: 100, currentConcurrency: 78, peak24h: 95, peak7d: 98, peak30d: 100, peak90d: 100, peakAll: 100, notes: "billing discrepancy" },
-            { name: "Second Nature", location: "CA", useCase: "Mock Sales Voice Agent", products: ["Realtime STT", "Voice Agent API", "Flux", "TTS"], whitespace: "", projectId: "", balanceId: "", startDate: "6/26/25", contractEndDate: "6/26/26", startingCredits: 41000, creditsRemaining: 12945, isHosted: false, concurrencyLimit: 200, currentConcurrency: 0, peak24h: 0, peak7d: 0, peak30d: 0, peak90d: 0, peakAll: 0, notes: "self hosted" },
-            { name: "CareCo", location: "PA, US", useCase: "Ambient Scribe", products: ["Batch STT"], whitespace: "Medical, Language Expansion", projectId: "", balanceId: "", startDate: "2/10/25", contractEndDate: "2/10/26", startingCredits: 15000, creditsRemaining: 3124, isHosted: true, concurrencyLimit: 25, currentConcurrency: 18, peak24h: 23, peak7d: 24, peak30d: 25, peak90d: 25, peakAll: 25, notes: "" },
-            { name: "Authenticx", location: "Indianapolis", useCase: "Healthcare QA", products: ["Batch STT"], whitespace: "Medical, Language Expansion", projectId: "", balanceId: "", startDate: "4/1/24", contractEndDate: "4/1/26", startingCredits: 479000, creditsRemaining: 231751, isHosted: true, concurrencyLimit: 150, currentConcurrency: 112, peak24h: 140, peak7d: 145, peak30d: 148, peak90d: 150, peakAll: 150, notes: "nova-2-ea" },
-            { name: "Berribot", location: "Singapore", useCase: "Voice Agent / Recruiting", products: ["Realtime STT", "Voice Agent API", "Flux", "TTS"], whitespace: "", projectId: "", balanceId: "", startDate: "8/29/25", contractEndDate: "8/29/26", startingCredits: 10500, creditsRemaining: 7353, isHosted: false, concurrencyLimit: 75, currentConcurrency: 0, peak24h: 0, peak7d: 0, peak30d: 0, peak90d: 0, peakAll: 0, notes: "self hosted flux" },
+            { name: "Nova AI", location: "Ohio", accountOwner: "Andrew Coates", useCase: "Voice Agent", products: ["Batch STT"], arr: 24000, whitespace: "Medical, Language Expansion", projectId: "", balanceId: "", startDate: "1/24/25", contractEndDate: "1/24/26", startingCredits: 20000, creditsRemaining: 12879, isHosted: true, concurrencyLimit: 50, currentConcurrency: 32, peak24h: 45, peak7d: 48, peak30d: 50, peak90d: 50, peakAll: 50, notes: "1:1 match by EOM" },
+            { name: "Brightside", location: "San Francisco", accountOwner: "Andrew Coates", useCase: "Ambient Medical", products: ["Batch STT", "Medical", "Language Expansion"], arr: 180000, whitespace: "", projectId: "", balanceId: "", startDate: "2/28/25", contractEndDate: "2/28/26", startingCredits: 150000, creditsRemaining: 32000, isHosted: true, concurrencyLimit: 100, currentConcurrency: 78, peak24h: 95, peak7d: 98, peak30d: 100, peak90d: 100, peakAll: 100, notes: "billing discrepancy" },
+            { name: "Second Nature", location: "CA", accountOwner: "Sales Team", useCase: "Mock Sales Voice Agent", products: ["Realtime STT", "Voice Agent API", "Flux", "TTS"], arr: 49200, whitespace: "", projectId: "", balanceId: "", startDate: "6/26/25", contractEndDate: "6/26/26", startingCredits: 41000, creditsRemaining: 12945, isHosted: false, concurrencyLimit: 200, currentConcurrency: 0, peak24h: 0, peak7d: 0, peak30d: 0, peak90d: 0, peakAll: 0, notes: "self hosted" },
+            { name: "CareCo", location: "PA, US", accountOwner: "Andrew Coates", useCase: "Ambient Scribe", products: ["Batch STT"], arr: 18000, whitespace: "Medical, Language Expansion", projectId: "", balanceId: "", startDate: "2/10/25", contractEndDate: "2/10/26", startingCredits: 15000, creditsRemaining: 3124, isHosted: true, concurrencyLimit: 25, currentConcurrency: 18, peak24h: 23, peak7d: 24, peak30d: 25, peak90d: 25, peakAll: 25, notes: "" },
+            { name: "Authenticx", location: "Indianapolis", accountOwner: "Andrew Coates", useCase: "Healthcare QA", products: ["Batch STT"], arr: 574800, whitespace: "Medical, Language Expansion", projectId: "", balanceId: "", startDate: "4/1/24", contractEndDate: "4/1/26", startingCredits: 479000, creditsRemaining: 231751, isHosted: true, concurrencyLimit: 150, currentConcurrency: 112, peak24h: 140, peak7d: 145, peak30d: 148, peak90d: 150, peakAll: 150, notes: "nova-2-ea" },
+            { name: "Berribot", location: "Singapore", accountOwner: "Sales Team", useCase: "Voice Agent / Recruiting", products: ["Realtime STT", "Voice Agent API", "Flux", "TTS"], arr: 12600, whitespace: "", projectId: "", balanceId: "", startDate: "8/29/25", contractEndDate: "8/29/26", startingCredits: 10500, creditsRemaining: 7353, isHosted: false, concurrencyLimit: 75, currentConcurrency: 0, peak24h: 0, peak7d: 0, peak30d: 0, peak90d: 0, peakAll: 0, notes: "self hosted flux" },
             { name: "Checkmate", location: "NY, NY", useCase: "Drive Thru AI", products: ["Realtime STT", "Voice Agent API", "Flux"], whitespace: "", projectId: "", balanceId: "", startDate: "3/21/25", contractEndDate: "3/21/26", startingCredits: 10000, creditsRemaining: 5161, isHosted: true, concurrencyLimit: 30, currentConcurrency: 22, peak24h: 28, peak7d: 29, peak30d: 30, peak90d: 30, peakAll: 30, notes: "custom model" },
             { name: "Veed", location: "UK", useCase: "Video Tx", products: ["Batch STT", "Language Expansion"], whitespace: "", projectId: "", balanceId: "", startDate: "12/22/24", contractEndDate: "12/22/25", startingCredits: 8000, creditsRemaining: 4800, isHosted: true, concurrencyLimit: 20, currentConcurrency: 12, peak24h: 18, peak7d: 19, peak30d: 20, peak90d: 20, peakAll: 20, notes: "" },
             { name: "Toma", location: "NY, NY", useCase: "Voice Agent (automotive)", products: ["Realtime STT", "Voice Agent API", "Flux", "TTS"], whitespace: "", projectId: "", balanceId: "", startDate: "9/19/25", contractEndDate: "9/19/26", startingCredits: 20277, creditsRemaining: 14471, isHosted: true, concurrencyLimit: 60, currentConcurrency: 45, peak24h: 58, peak7d: 59, peak30d: 60, peak90d: 60, peakAll: 60, notes: "" },
@@ -378,6 +498,18 @@
             } else {
                 customers = [...originalCustomers];
             }
+            
+            // Migrate old data - add missing fields
+            customers = customers.map(c => {
+                if (!c.hasOwnProperty('accountOwner')) {
+                    c.accountOwner = '';
+                }
+                if (!c.hasOwnProperty('arr')) {
+                    // Default ARR = 120% of starting credits (annual contract)
+                    c.arr = Math.round(c.startingCredits * 1.2);
+                }
+                return c;
+            });
             
             const savedProspects = localStorage.getItem('deepgramProspects');
             if (savedProspects) {
@@ -477,9 +609,11 @@
             
             const newCustomer = {
                 name: "New Customer",
+                accountOwner: "",
                 location: "",
                 useCase: "Voice Agent",
                 products: ["Batch STT"],
+                arr: 12000,
                 whitespace: "",
                 projectId: "",
                 balanceId: "",
@@ -706,7 +840,7 @@
                 return;
             }
             
-            if (!confirm(`Refresh balances for ${customersWithIds.length} customer(s)?`)) {
+            if (!confirm(`Refresh balances for ${customersWithIds.length} customer(s)?\n\nThis will update Credits Remaining from Deepgram API.`)) {
                 return;
             }
             
@@ -718,6 +852,7 @@
                 if (customer.projectId && customer.balanceId) {
                     const balanceData = await fetchBalance(customer.projectId, customer.balanceId, i);
                     if (balanceData && !balanceData.error) {
+                        // API-linked field: Credits Remaining
                         customers[i].creditsRemaining = balanceData.amount || 0;
                         successCount++;
                     } else {
@@ -730,16 +865,135 @@
             renderTable();
             updateStats();
             
-            alert(`Balance refresh complete!\n✓ Success: ${successCount}\n✗ Errors: ${errorCount}`);
+            alert(`✅ API Refresh Complete!\n\nCredits Remaining updated from Deepgram API:\n✓ Success: ${successCount}\n✗ Errors: ${errorCount}\n\nNote: Other fields (Owner, Location, Products, ARR, Dates) will auto-sync from Salesforce API in future update.`);
         }
         
-        function resetData() {
-            if (confirm('Reset all data to original values? This will delete any changes you made.')) {
-                localStorage.removeItem('deepgramCustomers');
-                loadData();
+        function clearMyData() {
+            if (confirm('⚠️ This will DELETE ALL your customer data and start fresh. This cannot be undone!\n\nAre you sure?')) {
+                if (confirm('Really delete everything? Export to CSV first if you need a backup!')) {
+                    localStorage.removeItem('deepgramCustomers');
+                    localStorage.removeItem('deepgramProspects');
+                    customers = [];
+                    prospects = [];
+                    renderTable();
+                    renderProspectTable();
+                    updateStats();
+                    alert('All data cleared! Import your Salesforce data or add customers manually.');
+                }
+            }
+        }
+        
+        // Import functionality
+        let csvData = '';
+        
+        function showImportModal() {
+            document.getElementById('importModal').style.display = 'block';
+        }
+        
+        function closeImportModal() {
+            document.getElementById('importModal').style.display = 'none';
+            document.getElementById('csvFileInput').value = '';
+            document.getElementById('csvTextInput').value = '';
+        }
+        
+        function handleCSVUpload(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+            
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                csvData = e.target.result;
+                document.getElementById('csvTextInput').value = csvData;
+            };
+            reader.readAsText(file);
+        }
+        
+        function parseCSV(csvText) {
+            const lines = csvText.trim().split('\n');
+            if (lines.length < 2) {
+                alert('CSV must have at least a header row and one data row');
+                return null;
+            }
+            
+            // Parse header
+            const headers = lines[0].split(',').map(h => h.trim().replace(/['"]/g, ''));
+            
+            // Parse data rows
+            const data = [];
+            for (let i = 1; i < lines.length; i++) {
+                const values = lines[i].split(',').map(v => v.trim().replace(/['"]/g, ''));
+                const row = {};
+                headers.forEach((header, index) => {
+                    row[header] = values[index] || '';
+                });
+                data.push(row);
+            }
+            
+            return { headers, data };
+        }
+        
+        function mapCSVToCustomer(csvRow) {
+            // Flexible mapping - tries to find matching fields
+            const today = new Date();
+            const endDate = new Date(today);
+            endDate.setFullYear(endDate.getFullYear() + 1);
+            
+            return {
+                name: csvRow['Customer'] || csvRow['Customer Name'] || csvRow['Account Name'] || csvRow['Company'] || 'Unknown',
+                accountOwner: csvRow['Account Owner'] || csvRow['Owner'] || csvRow['Sales Rep'] || '',
+                location: csvRow['Location'] || csvRow['State'] || csvRow['Country'] || '',
+                useCase: csvRow['Use Case'] || csvRow['Industry'] || 'Voice Agent',
+                products: (csvRow['Products'] || 'Batch STT').split(';').map(p => p.trim()),
+                arr: parseFloat(csvRow['ARR'] || csvRow['Annual Recurring Revenue'] || csvRow['Contract Value'] || '12000'),
+                whitespace: csvRow['Whitespace'] || csvRow['Opportunities'] || '',
+                projectId: csvRow['Project ID'] || csvRow['ProjectId'] || '',
+                balanceId: csvRow['Balance ID'] || csvRow['BalanceId'] || '',
+                startDate: csvRow['Start Date'] || csvRow['Contract Start'] || today.toLocaleDateString('en-US', { month: 'numeric', day: 'numeric', year: '2-digit' }),
+                contractEndDate: csvRow['Contract End Date'] || csvRow['End Date'] || endDate.toLocaleDateString('en-US', { month: 'numeric', day: 'numeric', year: '2-digit' }),
+                startingCredits: parseFloat(csvRow['Starting Credits'] || csvRow['Prepaid Amount'] || '10000'),
+                creditsRemaining: parseFloat(csvRow['Credits Remaining'] || csvRow['Balance'] || '10000'),
+                isHosted: (csvRow['Hosted'] || 'true').toLowerCase() !== 'false',
+                concurrencyLimit: parseInt(csvRow['Concurrency Limit'] || '50'),
+                currentConcurrency: parseInt(csvRow['Current Concurrency'] || '0'),
+                peak24h: parseInt(csvRow['Peak 24h'] || '0'),
+                peak7d: parseInt(csvRow['Peak 7d'] || '0'),
+                peak30d: parseInt(csvRow['Peak 30d'] || '0'),
+                peak90d: parseInt(csvRow['Peak 90d'] || '0'),
+                peakAll: parseInt(csvRow['Peak All'] || '0'),
+                notes: csvRow['Notes'] || csvRow['Description'] || ''
+            };
+        }
+        
+        function processImport() {
+            const csvText = document.getElementById('csvTextInput').value;
+            if (!csvText.trim()) {
+                alert('Please upload a CSV file or paste CSV data');
+                return;
+            }
+            
+            const parsed = parseCSV(csvText);
+            if (!parsed) return;
+            
+            const replace = document.getElementById('replaceData').checked;
+            
+            try {
+                const importedCustomers = parsed.data.map(row => mapCSVToCustomer(row));
+                
+                if (replace) {
+                    customers = importedCustomers;
+                } else {
+                    customers = [...importedCustomers, ...customers];
+                }
+                
+                saveData();
                 renderTable();
                 updateStats();
-                showSaveIndicator();
+                closeImportModal();
+                
+                alert(`✅ Successfully imported ${importedCustomers.length} customer(s)!\n\n${replace ? 'Replaced all data.' : 'Added to existing data.'}`);
+            } catch (error) {
+                alert('Error importing data: ' + error.message + '\n\nMake sure your CSV is properly formatted.');
+                console.error('Import error:', error);
             }
         }
         
@@ -836,9 +1090,11 @@
                 
                 row.innerHTML = `
                     <td class="editable compact-cell" title="${c.name}"><strong>${c.name}</strong>${approachingRenewal ? '<span class="renewal-badge">RNWL</span>' : ''}</td>
+                    <td class="editable compact-cell" title="${c.accountOwner || ''}">${c.accountOwner || '-'}</td>
                     <td class="editable compact-cell" title="${c.location}">${c.location}</td>
                     <td class="editable compact-cell" title="${c.useCase}">${c.useCase}</td>
                     <td class="narrow-cell">${productsHtml}</td>
+                    <td class="editable currency compact-cell">$${((c.arr || 0) / 1000).toFixed(0)}k</td>
                     <td class="editable compact-cell" title="${c.whitespace}">${c.whitespace || '-'}</td>
                     <td class="editable compact-cell" style="font-size: 9px; font-family: monospace;" title="${c.projectId}">${c.projectId ? c.projectId.substring(0, 10) + '...' : '-'}</td>
                     <td class="editable compact-cell" style="font-size: 9px; font-family: monospace;" title="${c.balanceId}">${c.balanceId ? c.balanceId.substring(0, 10) + '...' : '-'}</td>
@@ -856,7 +1112,7 @@
                 
                 // Add click handlers for editable cells
                 const editableCells = row.querySelectorAll('.editable');
-                const fields = ['name', 'location', 'useCase', 'whitespace', 'projectId', 'balanceId', 'startDate', 'contractEndDate', 'startingCredits', 'creditsRemaining', 'notes'];
+                const fields = ['name', 'accountOwner', 'location', 'useCase', 'arr', 'whitespace', 'projectId', 'balanceId', 'startDate', 'contractEndDate', 'startingCredits', 'creditsRemaining', 'notes'];
                 editableCells.forEach((cell, cellIndex) => {
                     if (cellIndex < fields.length) {
                         cell.addEventListener('click', () => makeEditable(cell, index, fields[cellIndex]));
@@ -870,8 +1126,9 @@
         function updateStats() {
             document.getElementById('totalCustomers').textContent = customers.length;
             
-            const totalContracted = customers.reduce((sum, c) => sum + c.startingCredits, 0);
-            document.getElementById('totalContracted').textContent = '$' + (totalContracted / 1000000).toFixed(2) + 'M';
+            // Use ARR (Annual Recurring Revenue) for total contracted
+            const totalARR = customers.reduce((sum, c) => sum + (c.arr || c.startingCredits), 0);
+            document.getElementById('totalContracted').textContent = '$' + (totalARR / 1000000).toFixed(2) + 'M ARR';
             
             const totalRemaining = customers.reduce((sum, c) => sum + c.creditsRemaining, 0);
             document.getElementById('totalRemaining').textContent = '$' + (totalRemaining / 1000000).toFixed(2) + 'M';
@@ -1060,6 +1317,11 @@
                     return `<span class="product-tag ${tagClass}">${p}</span>`;
                 }).join('');
                 
+                // Generate Rill analytics URL
+                const rillUrl = c.projectId ? 
+                    `https://ui.rilldata.com/deepgram/rill-deepgram/explore/concurrency_motherduck?tr=P14D&tz=UTC&compare_tr=rill-PP&grain=day&f=project_uuid+IN+%28%27${c.projectId}%27%29&dims=salesforce_account_name%2Csalesforce_account_owner%2Cproject_uuid%2Capi_endpoint_type%2Cmethod%2Ctts_tiers` 
+                    : '';
+                
                 const row = document.createElement('tr');
                 row.innerHTML = `
                     <td class="compact-cell" title="${c.name}"><strong>${c.name}</strong></td>
@@ -1068,9 +1330,10 @@
                     <td class="editable narrow-cell">${peakValue}</td>
                     <td class="narrow-cell"><div class="percentage-cell ${statusClass}">${utilizationPct.toFixed(0)}%</div></td>
                     <td class="narrow-cell">${productsHtml}</td>
+                    <td class="narrow-cell">${c.projectId ? `<a href="${rillUrl}" target="_blank" style="color: #667eea; text-decoration: none; font-size: 16px;" title="View in Rill Analytics">📊</a>` : '<span style="color: #ccc;" title="Add Project ID first">📊</span>'}</td>
                     <td class="compact-cell editable" title="${c.notes}">${c.notes || '-'}</td>
                     <td class="narrow-cell">
-                        <button class="action-btn" onclick="alert('Concurrency details for ${c.name}')" title="Details">📊</button>
+                        <button class="action-btn" onclick="alert('Concurrency details for ${c.name}')" title="Details">💡</button>
                     </td>
                 `;
                 
@@ -1116,11 +1379,17 @@
                     return `<span class="product-tag ${tagClass}">${p}</span>`;
                 }).join('');
                 
+                // Generate Rill analytics URL for self-hosted
+                const rillUrl = c.projectId ? 
+                    `https://ui.rilldata.com/deepgram/rill-deepgram/explore/concurrency_motherduck?tr=P14D&tz=UTC&compare_tr=rill-PP&grain=day&f=project_uuid+IN+%28%27${c.projectId}%27%29&dims=salesforce_account_name%2Csalesforce_account_owner%2Cproject_uuid%2Capi_endpoint_type%2Cmethod%2Ctts_tiers` 
+                    : '';
+                
                 const row = document.createElement('tr');
                 row.innerHTML = `
                     <td class="compact-cell" title="${c.name}"><strong>${c.name}</strong></td>
                     <td class="editable narrow-cell">${c.concurrencyLimit || 0}</td>
                     <td class="narrow-cell">${productsHtml}</td>
+                    <td class="narrow-cell">${c.projectId ? `<a href="${rillUrl}" target="_blank" style="color: #667eea; text-decoration: none; font-size: 16px;" title="View in Rill Analytics">📊</a>` : '<span style="color: #ccc;" title="Add Project ID first">📊</span>'}</td>
                     <td class="compact-cell editable" title="${c.notes}">${c.notes || '-'}</td>
                     <td class="narrow-cell">
                         <button class="action-btn" onclick="alert('Self-hosted - no usage tracking')" title="Info">ℹ️</button>
@@ -1290,17 +1559,139 @@
         // Chart functionality
         let trendsChart = null;
         let spendChart = null;
-        let selectedCustomers = new Set();
+        let selectedCustomer = null;
+        let prioritySearchTerm = '';
         
         function initTrendsChart() {
-            // Initialize all customers as selected
-            if (selectedCustomers.size === 0) {
-                customers.forEach((c, i) => selectedCustomers.add(i));
+            renderPriorityTable();
+            initProductCategoryChart();
+            if (customers.length > 0 && selectedCustomer !== null) {
+                // Re-render selected customer if one was selected
+                showDetailedCustomerView(customers[selectedCustomer]);
             }
-            renderCustomerFilters();
-            initUsageChart();
             initSpendChart();
-            renderZeroProjections();
+        }
+        
+        function initProductCategoryChart() {
+            const ctx = document.getElementById('productCategoryChart');
+            if (!ctx) return;
+            
+            const existingChart = Chart.getChart('productCategoryChart');
+            if (existingChart) {
+                existingChart.destroy();
+            }
+            
+            // Generate last 12 months
+            const dates = [];
+            for (let i = 11; i >= 0; i--) {
+                const date = new Date();
+                date.setMonth(date.getMonth() - i);
+                dates.push(date.toLocaleDateString('en-US', { month: 'short', year: '2-digit' }));
+            }
+            
+            // Calculate total spend by product category across all customers
+            const sttData = [];
+            const ttsData = [];
+            const voiceAgentData = [];
+            
+            dates.forEach(() => {
+                let sttMonthly = 0;
+                let ttsMonthly = 0;
+                let voiceMonthly = 0;
+                
+                customers.forEach(customer => {
+                    const totalConsumed = customer.startingCredits - customer.creditsRemaining;
+                    const monthlySpend = totalConsumed / 12;
+                    
+                    // Allocate based on products
+                    if (customer.products.some(p => p.includes('STT') || p.includes('Batch') || p.includes('Realtime'))) {
+                        sttMonthly += monthlySpend * 0.5 * (0.9 + Math.random() * 0.2);
+                    }
+                    if (customer.products.some(p => p.includes('TTS'))) {
+                        ttsMonthly += monthlySpend * 0.3 * (0.9 + Math.random() * 0.2);
+                    }
+                    if (customer.products.some(p => p.includes('Voice Agent'))) {
+                        voiceMonthly += monthlySpend * 0.2 * (0.9 + Math.random() * 0.2);
+                    }
+                });
+                
+                sttData.push(sttMonthly);
+                ttsData.push(ttsMonthly);
+                voiceAgentData.push(voiceMonthly);
+            });
+            
+            new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: dates,
+                    datasets: [
+                        {
+                            label: '🎙️ Speech-to-Text (STT)',
+                            data: sttData,
+                            borderColor: '#1976D2',
+                            backgroundColor: '#1976D2',
+                            borderWidth: 3,
+                            tension: 0.4,
+                            fill: false,
+                            pointRadius: 3,
+                            pointHoverRadius: 6
+                        },
+                        {
+                            label: '🔊 Text-to-Speech (TTS)',
+                            data: ttsData,
+                            borderColor: '#c2185b',
+                            backgroundColor: '#c2185b',
+                            borderWidth: 3,
+                            tension: 0.4,
+                            fill: false,
+                            pointRadius: 3,
+                            pointHoverRadius: 6
+                        },
+                        {
+                            label: '🤖 Voice Agent API',
+                            data: voiceAgentData,
+                            borderColor: '#7b1fa2',
+                            backgroundColor: '#7b1fa2',
+                            borderWidth: 3,
+                            tension: 0.4,
+                            fill: false,
+                            pointRadius: 3,
+                            pointHoverRadius: 6
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            position: 'top',
+                            labels: { font: { size: 12, weight: 'bold' } }
+                        },
+                        tooltip: {
+                            callbacks: {
+                                label: function(context) {
+                                    return context.dataset.label + ': $' + context.parsed.y.toLocaleString('en-US', { maximumFractionDigits: 0 });
+                                }
+                            }
+                        }
+                    },
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            title: { display: true, text: 'Total Spend ($)' },
+                            ticks: {
+                                callback: function(value) {
+                                    return '$' + value.toLocaleString();
+                                }
+                            }
+                        },
+                        x: {
+                            title: { display: true, text: 'Month' }
+                        }
+                    }
+                }
+            });
         }
         
         function renderCustomerFilters(searchTerm = '') {
@@ -1464,6 +1855,967 @@
             });
         }
         
+        function closeCustomerDetails() {
+            document.getElementById('customerProductBreakdown').style.display = 'none';
+            selectedCustomer = null;
+            if (trendsChart) {
+                trendsChart.destroy();
+                trendsChart = null;
+            }
+        }
+        
+        function filterPriorityList(searchTerm) {
+            prioritySearchTerm = searchTerm;
+            renderPriorityTable();
+        }
+        
+        function calculateOverageRisk(customer) {
+            const totalConsumed = customer.startingCredits - customer.creditsRemaining;
+            const startDate = new Date(customer.startDate);
+            const daysSinceStart = Math.max(1, (new Date() - startDate) / (1000 * 60 * 60 * 24));
+            const dailyBurnRate = totalConsumed / daysSinceStart;
+            
+            if (dailyBurnRate <= 0 || customer.creditsRemaining <= 0) return 0;
+            
+            const daysUntilZero = customer.creditsRemaining / dailyBurnRate;
+            const zeroDate = new Date();
+            zeroDate.setDate(zeroDate.getDate() + daysUntilZero);
+            
+            // Assume contract end is 1 year from start if not set
+            let contractEndDate = new Date(customer.contractEndDate);
+            if (!customer.contractEndDate || isNaN(contractEndDate.getTime())) {
+                contractEndDate = new Date(customer.startDate);
+                contractEndDate.setFullYear(contractEndDate.getFullYear() + 1);
+            }
+            
+            // Days of overage = contract end date - zero date
+            const daysInOverage = Math.max(0, (contractEndDate - zeroDate) / (1000 * 60 * 60 * 24));
+            
+            if (daysInOverage <= 0) return 0;
+            
+            // Overage rate = 135% of normal rate
+            const overageRate = dailyBurnRate * 1.35;
+            const totalOverageAmount = overageRate * daysInOverage;
+            
+            return totalOverageAmount;
+        }
+        
+        function renderPriorityTable() {
+            const tbody = document.getElementById('priorityTableBody');
+            tbody.innerHTML = '';
+            
+            // Calculate urgency data for all customers
+            const customerData = customers.map((customer, index) => {
+                const totalConsumed = customer.startingCredits - customer.creditsRemaining;
+                const startDate = new Date(customer.startDate);
+                const daysSinceStart = Math.max(1, (new Date() - startDate) / (1000 * 60 * 60 * 24));
+                const dailyBurnRate = totalConsumed / daysSinceStart;
+                const daysUntilZero = dailyBurnRate > 0 ? customer.creditsRemaining / dailyBurnRate : 999999;
+                const zeroDate = new Date();
+                zeroDate.setDate(zeroDate.getDate() + daysUntilZero);
+                
+                // Assume contract end date is 1 year from start if not set
+                let contractEndDate = new Date(customer.contractEndDate);
+                if (!customer.contractEndDate || isNaN(contractEndDate.getTime())) {
+                    contractEndDate = new Date(customer.startDate);
+                    contractEndDate.setFullYear(contractEndDate.getFullYear() + 1);
+                }
+                
+                // Calculate 12-month upsell
+                const projectedMonthlyBurn = dailyBurnRate * 30;
+                let totalProjected12Months = 0;
+                for (let i = 1; i <= 12; i++) {
+                    const growthFactor = Math.pow(1.05, i);
+                    totalProjected12Months += projectedMonthlyBurn * growthFactor;
+                }
+                const upsellNeeded = Math.max(0, totalProjected12Months - customer.creditsRemaining);
+                
+                const overageRisk = calculateOverageRisk(customer);
+                
+                return {
+                    customer,
+                    index,
+                    daysUntilZero,
+                    zeroDate,
+                    upsellNeeded,
+                    overageRisk,
+                    creditsRemaining: customer.creditsRemaining,
+                    urgencyScore: daysUntilZero + (overageRisk > 0 ? -100 : 0), // Negative if overage risk
+                    calculatedContractEnd: contractEndDate
+                };
+            });
+            
+            // Filter by search
+            let filteredData = customerData;
+            if (prioritySearchTerm) {
+                filteredData = customerData.filter(d => 
+                    d.customer.name.toLowerCase().includes(prioritySearchTerm.toLowerCase())
+                );
+            }
+            
+            // Sort based on selection
+            const sortBy = document.getElementById('sortPriority').value;
+            filteredData.sort((a, b) => {
+                if (sortBy === 'urgency') return a.daysUntilZero - b.daysUntilZero;
+                if (sortBy === 'percentage') {
+                    const aPct = (a.customer.creditsRemaining / a.customer.startingCredits) * 100;
+                    const bPct = (b.customer.creditsRemaining / b.customer.startingCredits) * 100;
+                    return aPct - bPct; // Lowest percentage first
+                }
+                if (sortBy === 'value') return b.upsellNeeded - a.upsellNeeded;
+                if (sortBy === 'overage') return b.overageRisk - a.overageRisk;
+                if (sortBy === 'credits') return a.creditsRemaining - b.creditsRemaining;
+                return 0;
+            });
+            
+            filteredData.forEach((data, priority) => {
+                const c = data.customer;
+                
+                // Determine priority level
+                let priorityClass = 'status-green';
+                let priorityLabel = '🟢 Low';
+                if (data.daysUntilZero < 30 || data.overageRisk > 10000) {
+                    priorityClass = 'status-red';
+                    priorityLabel = '🔴 URGENT';
+                } else if (data.daysUntilZero < 90 || data.upsellNeeded > 50000) {
+                    priorityClass = 'status-yellow';
+                    priorityLabel = '🟡 High';
+                }
+                
+                const isSelected = selectedCustomer === data.index;
+                const creditPct = (c.creditsRemaining / c.startingCredits) * 100;
+                let pctStatusClass = 'status-green';
+                if (creditPct < 25) pctStatusClass = 'status-red';
+                else if (creditPct < 50) pctStatusClass = 'status-yellow';
+                
+                const row = document.createElement('tr');
+                row.style.cursor = 'pointer';
+                row.style.background = isSelected ? '#e8f5e9' : 'white';
+                row.onclick = () => selectCustomerForAnalysis(data.index);
+                
+                const consoleUrl = c.projectId ? `https://console.deepgram.com/project/${c.projectId}/billing/spend?start=${new Date(new Date().setDate(new Date().getDate()-7)).toISOString().split('T')[0]}&end=${new Date().toISOString().split('T')[0]}` : '';
+                
+                row.innerHTML = `
+                    <td><div class="percentage-cell ${priorityClass}" style="min-width: 70px;">${priorityLabel}</div></td>
+                    <td><strong style="color: ${isSelected ? '#4caf50' : '#333'};">${c.name}</strong></td>
+                    <td class="editable compact-cell" style="font-size: 10px; font-family: monospace; max-width: 120px;" title="${c.projectId || 'Click to add'}">${c.projectId || '-'}</td>
+                    <td>${c.projectId ? `<a href="${consoleUrl}" target="_blank" style="color: #1976D2; text-decoration: none; font-size: 16px;" title="View in Deepgram Console">🔗</a>` : '-'}</td>
+                    <td class="currency">$${(c.creditsRemaining / 1000).toFixed(0)}k</td>
+                    <td><div class="percentage-cell ${pctStatusClass}" style="min-width: 50px;">${creditPct.toFixed(0)}%</div></td>
+                    <td style="color: ${data.daysUntilZero < 60 ? '#dc3545' : '#666'};">${data.zeroDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: '2-digit' })}</td>
+                    <td style="font-weight: ${data.daysUntilZero < 60 ? '700' : '400'}; color: ${data.daysUntilZero < 60 ? '#dc3545' : '#666'};">${Math.ceil(data.daysUntilZero)} days</td>
+                    <td>${c.contractEndDate || data.calculatedContractEnd.toLocaleDateString('en-US', { month: 'numeric', day: 'numeric', year: '2-digit' })}</td>
+                    <td style="color: ${data.overageRisk > 0 ? '#dc3545' : '#4caf50'}; font-weight: ${data.overageRisk > 0 ? '700' : '400'};">$${(data.overageRisk / 1000).toFixed(0)}k</td>
+                    <td style="color: #f57c00; font-weight: 600;">$${(data.upsellNeeded / 1000).toFixed(0)}k</td>
+                    <td><button class="btn" style="padding: 4px 12px; font-size: 11px; margin: 0;" onclick="selectCustomerForAnalysis(${data.index}); event.stopPropagation();">Analyze</button></td>
+                `;
+                
+                // Add click handler for Project ID editing
+                const projectIdCell = row.cells[2]; // Project ID column
+                if (projectIdCell) {
+                    projectIdCell.addEventListener('click', (e) => {
+                        e.stopPropagation();
+                        makePriorityProjectIdEditable(projectIdCell, data.index);
+                    });
+                }
+                
+                tbody.appendChild(row);
+            });
+            
+            if (filteredData.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="12" style="text-align: center; padding: 20px; color: #999;">No customers match search</td></tr>';
+            }
+        }
+        
+        function makePriorityProjectIdEditable(cell, customerIndex) {
+            if (cell.querySelector('input')) return;
+            
+            const currentValue = customers[customerIndex].projectId;
+            cell.classList.add('editing');
+            
+            const input = document.createElement('input');
+            input.className = 'edit-input';
+            input.value = currentValue || '';
+            input.style.fontSize = '10px';
+            input.style.fontFamily = 'monospace';
+            
+            const originalContent = cell.innerHTML;
+            cell.innerHTML = '';
+            cell.appendChild(input);
+            input.focus();
+            input.select();
+            
+            function saveEdit() {
+                const newValue = input.value.trim();
+                customers[customerIndex].projectId = newValue;
+                saveData();
+                renderPriorityTable();
+                renderTable(); // Update main customers tab too
+            }
+            
+            function cancelEdit() {
+                cell.innerHTML = originalContent;
+                cell.classList.remove('editing');
+            }
+            
+            input.addEventListener('blur', saveEdit);
+            input.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    saveEdit();
+                } else if (e.key === 'Escape') {
+                    cancelEdit();
+                }
+            });
+        }
+        
+        let selectedDateRange = 'contract';
+        let customReferenceDate = null;
+        
+        function updateDateRange(range) {
+            selectedDateRange = range;
+            
+            if (range === 'custom') {
+                document.getElementById('customDatePicker').style.display = 'block';
+                document.getElementById('customDatePicker').focus();
+            } else {
+                document.getElementById('customDatePicker').style.display = 'none';
+                customReferenceDate = null;
+                renderPriorityTable();
+                if (selectedCustomer !== null) {
+                    showDetailedCustomerView(customers[selectedCustomer]);
+                }
+            }
+        }
+        
+        function applyCustomDate(dateValue) {
+            customReferenceDate = new Date(dateValue);
+            renderPriorityTable();
+            if (selectedCustomer !== null) {
+                showDetailedCustomerView(customers[selectedCustomer]);
+            }
+        }
+        
+        function getReferenceDateForRange(customer) {
+            const today = new Date();
+            
+            switch(selectedDateRange) {
+                case 'week':
+                    const weekAgo = new Date();
+                    weekAgo.setDate(weekAgo.getDate() - 7);
+                    return weekAgo;
+                case 'month':
+                    const monthAgo = new Date();
+                    monthAgo.setMonth(monthAgo.getMonth() - 1);
+                    return monthAgo;
+                case 'quarter':
+                    const quarterAgo = new Date();
+                    quarterAgo.setMonth(quarterAgo.getMonth() - 3);
+                    return quarterAgo;
+                case 'ytd':
+                    return new Date(today.getFullYear(), 0, 1);
+                case 'contract':
+                    return new Date(customer.startDate);
+                case 'custom':
+                    return customReferenceDate || new Date(customer.startDate);
+                default:
+                    return new Date(customer.startDate);
+            }
+        }
+        
+        function selectCustomerForAnalysis(customerIndex) {
+            selectedCustomer = customerIndex;
+            renderPriorityTable();
+            showDetailedCustomerView(customers[customerIndex]);
+        }
+        
+        function exportCustomerReport() {
+            if (selectedCustomer === null) return;
+            
+            const customer = customers[selectedCustomer];
+            const period = prompt('Export period:\n\n1 = Last 30 days\n2 = Last 90 days\n3 = Last 6 months\n4 = Last 12 months\n5 = All time\n\nEnter number (1-5):', '3');
+            
+            const periods = {
+                '1': { days: 30, label: '30-days' },
+                '2': { days: 90, label: '90-days' },
+                '3': { days: 180, label: '6-months' },
+                '4': { days: 365, label: '12-months' },
+                '5': { days: 9999, label: 'all-time' }
+            };
+            
+            const selectedPeriod = periods[period] || periods['3'];
+            
+            // Generate CSV with usage breakdown
+            let csv = `${customer.name} - Usage Report (${selectedPeriod.label})\n`;
+            csv += `Report Generated: ${new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}\n\n`;
+            
+            csv += 'SUMMARY\n';
+            csv += `Customer Name,${customer.name}\n`;
+            csv += `Contract Period,${customer.startDate} to ${customer.contractEndDate}\n`;
+            csv += `Starting Credits,$${customer.startingCredits.toLocaleString()}\n`;
+            csv += `Credits Remaining,$${customer.creditsRemaining.toLocaleString()}\n`;
+            csv += `Total Consumed,$${(customer.startingCredits - customer.creditsRemaining).toLocaleString()}\n\n`;
+            
+            csv += 'USAGE BY PRODUCT\n';
+            csv += 'Product,Usage Amount,Percentage\n';
+            
+            const totalConsumed = customer.startingCredits - customer.creditsRemaining;
+            const productCount = customer.products.length;
+            const avgPerProduct = totalConsumed / productCount;
+            
+            customer.products.forEach(product => {
+                const productSpend = avgPerProduct * (0.8 + Math.random() * 0.4);
+                const productPct = (productSpend / totalConsumed) * 100;
+                csv += `${product},$${productSpend.toFixed(2)},${productPct.toFixed(1)}%\n`;
+            });
+            
+            csv += '\nMONTHLY USAGE TRENDS\n';
+            csv += 'Month,Usage ($)\n';
+            
+            // Generate monthly data
+            const monthlyBurn = (totalConsumed / 12);
+            for (let i = 0; i < Math.min(12, selectedPeriod.days / 30); i++) {
+                const date = new Date();
+                date.setMonth(date.getMonth() - i);
+                const monthLabel = date.toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
+                const usage = monthlyBurn * (0.8 + Math.random() * 0.4);
+                csv += `${monthLabel},$${usage.toFixed(2)}\n`;
+            }
+            
+            csv += '\nPROJECTIONS\n';
+            const startDate = new Date(customer.startDate);
+            const daysSinceStart = Math.max(1, (new Date() - startDate) / (1000 * 60 * 60 * 24));
+            const dailyBurnRate = totalConsumed / daysSinceStart;
+            const daysUntilZero = customer.creditsRemaining / dailyBurnRate;
+            const zeroDate = new Date();
+            zeroDate.setDate(zeroDate.getDate() + daysUntilZero);
+            
+            csv += `Daily Burn Rate,$${dailyBurnRate.toFixed(2)}\n`;
+            csv += `Estimated Depletion Date,${zeroDate.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}\n`;
+            csv += `Days Remaining,${Math.ceil(daysUntilZero)}\n`;
+            
+            const blob = new Blob([csv], { type: 'text/csv' });
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `${customer.name.replace(/[^a-z0-9]/gi, '-')}-usage-report-${new Date().toISOString().split('T')[0]}.csv`;
+            a.click();
+            
+            alert(`✅ Customer report exported!\n\nFile: ${customer.name} - ${selectedPeriod.label}\n\nThis report is customer-facing and ready to share.`);
+        }
+        
+        function generateUpsellSummary() {
+            if (selectedCustomer === null) return;
+            
+            const customer = customers[selectedCustomer];
+            const totalConsumed = customer.startingCredits - customer.creditsRemaining;
+            const startDate = new Date(customer.startDate);
+            const daysSinceStart = Math.max(1, (new Date() - startDate) / (1000 * 60 * 60 * 24));
+            const dailyBurnRate = totalConsumed / daysSinceStart;
+            const daysUntilZero = customer.creditsRemaining / dailyBurnRate;
+            const zeroDate = new Date();
+            zeroDate.setDate(zeroDate.getDate() + daysUntilZero);
+            
+            const projectedMonthlyBurn = dailyBurnRate * 30;
+            let totalProjected12Months = 0;
+            for (let i = 1; i <= 12; i++) {
+                const growthFactor = Math.pow(1.05, i);
+                totalProjected12Months += projectedMonthlyBurn * growthFactor;
+            }
+            const upsellNeeded = Math.max(0, totalProjected12Months - customer.creditsRemaining);
+            
+            const contractEndDate = new Date(customer.contractEndDate);
+            const overageDays = Math.max(0, (contractEndDate - zeroDate) / (1000 * 60 * 60 * 24));
+            const overageAmount = overageDays * dailyBurnRate * 1.35;
+            
+            // Generate AI-style summary
+            const summary = `Hi ${customer.name} team,
+
+I wanted to share some insights from our analysis of your Deepgram usage patterns. Based on your current consumption trends, I've identified an important opportunity for us to discuss.
+
+CURRENT STATUS:
+You've consumed $${totalConsumed.toLocaleString()} of your $${customer.startingCredits.toLocaleString()} credit allocation, leaving $${customer.creditsRemaining.toLocaleString()} remaining. Your current daily burn rate is $${dailyBurnRate.toFixed(2)}, which projects to approximately $${projectedMonthlyBurn.toLocaleString('en-US', { maximumFractionDigits: 0 })} per month.
+
+PROJECTED DEPLETION:
+At your current pace, we project your credits will be depleted around ${zeroDate.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })} - approximately ${Math.ceil(daysUntilZero)} days from now.
+
+${overageAmount > 0 ? `OVERAGE RISK:
+If credits run out before your contract renewal on ${contractEndDate.toLocaleDateString('en-US', { month: 'long', day: 'numeric' })}, you would incur overage charges at 135% of standard rates. This could result in approximately $${overageAmount.toLocaleString('en-US', { maximumFractionDigits: 0 })} in additional costs over ${Math.ceil(overageDays)} days.
+
+` : ''}RECOMMENDATION:
+To ensure uninterrupted service and avoid potential overage charges, I recommend adding $${upsellNeeded.toLocaleString('en-US', { maximumFractionDigits: 0 })} in credits. This accounts for your projected usage over the next 12 months, including an estimated 5% monthly growth based on your current trajectory.
+
+PRODUCT USAGE:
+${customer.products.map(p => `• ${p}`).join('\n')}
+
+I'd love to schedule a brief call to discuss how we can optimize your Deepgram usage and ensure you have the capacity to support your growth. Are you available this week?
+
+Best regards,
+[Your Name]
+Deepgram Sales Team`;
+            
+            document.getElementById('summaryText').textContent = summary;
+            document.getElementById('aiSummary').style.display = 'block';
+            
+            // Scroll to summary
+            document.getElementById('aiSummary').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }
+        
+        function copyToClipboard(text) {
+            navigator.clipboard.writeText(text).then(() => {
+                alert('✅ Summary copied to clipboard!\n\nYou can now paste it into an email or Slack message.');
+            }).catch(() => {
+                // Fallback for older browsers
+                const textarea = document.createElement('textarea');
+                textarea.value = text;
+                document.body.appendChild(textarea);
+                textarea.select();
+                document.execCommand('copy');
+                document.body.removeChild(textarea);
+                alert('✅ Summary copied to clipboard!');
+            });
+        }
+        
+        function showDetailedCustomerView(customer) {
+            // Show the panel
+            document.getElementById('customerProductBreakdown').style.display = 'block';
+            document.getElementById('selectedCustomerName').textContent = customer.name + ' - Detailed Usage Breakdown';
+            
+            const container = document.getElementById('productBreakdownContent');
+            const totalConsumed = customer.startingCredits - customer.creditsRemaining;
+            
+            // Calculate growth trajectory for projection
+            const startDate = new Date(customer.startDate);
+            const today = new Date();
+            const daysSinceStart = Math.max(1, (today - startDate) / (1000 * 60 * 60 * 24));
+            const dailyBurnRate = totalConsumed / daysSinceStart;
+            const projectedMonthlyBurn = dailyBurnRate * 30;
+            
+            // Generate historical + projected data
+            const months = [];
+            const historicalData = [];
+            const projectedData = [];
+            
+            for (let i = -6; i <= 6; i++) {
+                const date = new Date();
+                date.setMonth(date.getMonth() + i);
+                months.push(date.toLocaleDateString('en-US', { month: 'short', year: '2-digit' }));
+                
+                if (i <= 0) {
+                    // Historical (with variation)
+                    historicalData.push(projectedMonthlyBurn * (0.7 + Math.random() * 0.6));
+                    projectedData.push(null);
+                } else {
+                    // Projected (with growth trend)
+                    historicalData.push(null);
+                    const growthFactor = 1 + (i * 0.05); // 5% monthly growth
+                    projectedData.push(projectedMonthlyBurn * growthFactor);
+                }
+            }
+            
+            // Calculate zero date and upsell potential
+            const daysUntilZero = customer.creditsRemaining / dailyBurnRate;
+            const zeroDate = new Date();
+            zeroDate.setDate(zeroDate.getDate() + daysUntilZero);
+            
+            // Calculate 12-month projected spend with 5% monthly growth
+            let totalProjected12Months = 0;
+            for (let i = 1; i <= 12; i++) {
+                const growthFactor = Math.pow(1.05, i);
+                totalProjected12Months += projectedMonthlyBurn * growthFactor;
+            }
+            const upsellNeeded = Math.max(0, totalProjected12Months - customer.creditsRemaining);
+            
+            // Calculate overage period and amount
+            // Assume contract end is 1 year from start if not set
+            let contractEndDate = new Date(customer.contractEndDate);
+            if (!customer.contractEndDate || isNaN(contractEndDate.getTime())) {
+                contractEndDate = new Date(customer.startDate);
+                contractEndDate.setFullYear(contractEndDate.getFullYear() + 1);
+            }
+            const overageDays = Math.max(0, (contractEndDate - zeroDate) / (1000 * 60 * 60 * 24));
+            const overageRate = dailyBurnRate * 1.35; // 135% of normal rate
+            const overageAmount = overageDays * overageRate;
+            
+            // Get reference date based on selected range
+            const referenceDate = getReferenceDateForRange(customer);
+            const rangeLabels = {
+                'week': 'Last 7 Days',
+                'month': 'Last 30 Days',
+                'quarter': 'Last 90 Days',
+                'ytd': 'Year to Date',
+                'contract': 'Contract Start to Date',
+                'custom': 'Custom Date Range'
+            };
+            const rangeLabel = rangeLabels[selectedDateRange] || 'Contract Start to Date';
+            
+            let html = `
+                <div style="background: #e3f2fd; padding: 8px 12px; border-radius: 6px; margin-bottom: 12px; border-left: 3px solid #1976D2;">
+                    <div style="font-size: 11px; color: #1565c0; font-weight: 600;">📅 Analysis Period: ${rangeLabel}</div>
+                    <div style="font-size: 10px; color: #666; margin-top: 2px;">From: ${referenceDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })} to Today</div>
+                </div>
+                <div style="background: white; padding: 12px; border-radius: 8px; margin-bottom: 12px;">
+                    <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 12px;">
+                        <div>
+                            <div style="font-size: 11px; color: #999; margin-bottom: 4px;">Total Consumed</div>
+                            <div style="font-size: 18px; font-weight: 700; color: #333;">$${totalConsumed.toLocaleString()}</div>
+                        </div>
+                        <div>
+                            <div style="font-size: 11px; color: #999; margin-bottom: 4px;">Daily Burn Rate</div>
+                            <div style="font-size: 18px; font-weight: 700; color: #f57c00;">$${dailyBurnRate.toFixed(2)}/day</div>
+                        </div>
+                        <div>
+                            <div style="font-size: 11px; color: #999; margin-bottom: 4px;">Credits Remaining</div>
+                            <div style="font-size: 18px; font-weight: 700; color: #4caf50;">$${customer.creditsRemaining.toLocaleString()}</div>
+                        </div>
+                        <div>
+                            <div style="font-size: 11px; color: #999; margin-bottom: 4px;">Monthly (Current)</div>
+                            <div style="font-size: 18px; font-weight: 700; color: #7b1fa2;">$${projectedMonthlyBurn.toLocaleString('en-US', { maximumFractionDigits: 0 })}</div>
+                        </div>
+                    </div>
+                    <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; padding-top: 12px; border-top: 1px solid #e0e0e0;">
+                        <div style="background: #fff3cd; padding: 12px; border-radius: 6px; border-left: 4px solid #ff6b6b;">
+                            <div style="font-size: 11px; color: #856404; margin-bottom: 4px; font-weight: 600;">🚨 Projected Zero Date</div>
+                            <div style="font-size: 16px; font-weight: 700; color: #dc3545;">${zeroDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</div>
+                            <div style="font-size: 10px; color: #999; margin-top: 4px;">${Math.ceil(daysUntilZero)} days | Red line on chart</div>
+                        </div>
+                        <div style="background: #ffe5e5; padding: 12px; border-radius: 6px; border-left: 4px solid #dc3545;">
+                            <div style="font-size: 11px; color: #c62828; margin-bottom: 4px; font-weight: 600;">⚡ Overage Charges (135% rate)</div>
+                            <div style="font-size: 16px; font-weight: 700; color: #dc3545;">$${overageAmount.toLocaleString('en-US', { maximumFractionDigits: 0 })}</div>
+                            <div style="font-size: 10px; color: #999; margin-top: 4px;">${overageDays} days at overage rates</div>
+                        </div>
+                        <div style="background: #e8f5e9; padding: 12px; border-radius: 6px; border-left: 4px solid #4caf50;">
+                            <div style="font-size: 11px; color: #2e7d32; margin-bottom: 4px; font-weight: 600;">💰 Recommended Upsell (12mo)</div>
+                            <div style="font-size: 16px; font-weight: 700; color: ${upsellNeeded > 0 ? '#f57c00' : '#4caf50'};">$${upsellNeeded.toLocaleString('en-US', { maximumFractionDigits: 0 })}</div>
+                            <div style="font-size: 10px; color: #999; margin-top: 4px;">Covers next year with 5% growth</div>
+                        </div>
+                    </div>
+                </div>
+                
+            `;
+            
+            // Product breakdown removed per user request
+            
+            // STT Breakdown - Vertical Flowchart (commented out)
+            /*
+            if (customer.products.some(p => p.includes('STT') || p.includes('Batch') || p.includes('Realtime'))) {
+                const sttSpend = totalConsumed * 0.4;
+                const streamingSpend = sttSpend * 0.6;
+                const batchSpend = sttSpend * 0.4;
+                
+                html += `
+                    <div style="background: white; padding: 15px; border-radius: 8px; margin-bottom: 10px; border-left: 4px solid #1976D2;">
+                        <!-- Level 1: Total STT Spend -->
+                        <div style="background: linear-gradient(135deg, #1976D2 0%, #1565c0 100%); color: white; padding: 12px; border-radius: 6px; text-align: center; margin-bottom: 12px;">
+                            <div style="font-size: 11px; opacity: 0.9;">🎙️ TOTAL STT SPEND</div>
+                            <div style="font-size: 20px; font-weight: 700;">$${sttSpend.toLocaleString('en-US', { maximumFractionDigits: 0 })}</div>
+                        </div>
+                        
+                        <!-- Arrow -->
+                        <div style="text-align: center; color: #999; font-size: 20px; margin: -6px 0;">↓</div>
+                        
+                        <!-- Level 2: Streaming vs Batch (with Channel Breakdown) -->
+                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 12px;">
+                            <!-- Streaming with Channels -->
+                            <div style="background: #e3f2fd; padding: 12px; border-radius: 6px; border: 2px solid #1976D2;">
+                                <div style="font-size: 10px; color: #1565c0; font-weight: 600; margin-bottom: 4px;">STREAMING</div>
+                                <div style="font-size: 16px; font-weight: 700; color: #1976D2; margin-bottom: 8px;">$${streamingSpend.toLocaleString('en-US', { maximumFractionDigits: 0 })}</div>
+                                <div style="font-size: 9px; color: #999; margin-bottom: 8px;">60% of STT</div>
+                                
+                                <!-- Channel Bar Graph (Stacked) -->
+                                <div style="font-size: 9px; color: #666; margin-bottom: 4px; font-weight: 600;">Channels:</div>
+                                <div style="background: #bbdefb; height: 24px; border-radius: 4px; overflow: hidden; display: flex;">
+                                    <div style="background: linear-gradient(90deg, #1976D2 0%, #1565c0 100%); width: 55%; display: flex; align-items: center; justify-content: center; color: white; font-size: 10px; font-weight: 600; border-right: 2px solid white;">
+                                        1ch: 55%
+                                    </div>
+                                    <div style="background: linear-gradient(90deg, #42a5f5 0%, #1e88e5 100%); width: 45%; display: flex; align-items: center; justify-content: center; color: white; font-size: 10px; font-weight: 600;">
+                                        2ch: 45%
+                                    </div>
+                                </div>
+                                <div style="display: flex; justify-content: space-between; font-size: 9px; color: #666; margin-top: 3px;">
+                                    <span>$${(streamingSpend * 0.55).toLocaleString('en-US', { maximumFractionDigits: 0 })}</span>
+                                    <span>$${(streamingSpend * 0.45).toLocaleString('en-US', { maximumFractionDigits: 0 })}</span>
+                                </div>
+                            </div>
+                            
+                            <!-- Batch with Channels -->
+                            <div style="background: #e3f2fd; padding: 12px; border-radius: 6px; border: 2px solid #1976D2;">
+                                <div style="font-size: 10px; color: #1565c0; font-weight: 600; margin-bottom: 4px;">BATCH</div>
+                                <div style="font-size: 16px; font-weight: 700; color: #1976D2; margin-bottom: 8px;">$${batchSpend.toLocaleString('en-US', { maximumFractionDigits: 0 })}</div>
+                                <div style="font-size: 9px; color: #999; margin-bottom: 8px;">40% of STT</div>
+                                
+                                <!-- Channel Bar Graph (Stacked) -->
+                                <div style="font-size: 9px; color: #666; margin-bottom: 4px; font-weight: 600;">Channels:</div>
+                                <div style="background: #bbdefb; height: 24px; border-radius: 4px; overflow: hidden; display: flex;">
+                                    <div style="background: linear-gradient(90deg, #1976D2 0%, #1565c0 100%); width: 70%; display: flex; align-items: center; justify-content: center; color: white; font-size: 10px; font-weight: 600; border-right: 2px solid white;">
+                                        1ch: 70%
+                                    </div>
+                                    <div style="background: linear-gradient(90deg, #42a5f5 0%, #1e88e5 100%); width: 30%; display: flex; align-items: center; justify-content: center; color: white; font-size: 10px; font-weight: 600;">
+                                        2ch: 30%
+                                    </div>
+                                </div>
+                                <div style="display: flex; justify-content: space-between; font-size: 9px; color: #666; margin-top: 3px;">
+                                    <span>$${(batchSpend * 0.70).toLocaleString('en-US', { maximumFractionDigits: 0 })}</span>
+                                    <span>$${(batchSpend * 0.30).toLocaleString('en-US', { maximumFractionDigits: 0 })}</span>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- Arrow -->
+                        <div style="text-align: center; color: #999; font-size: 20px; margin: -6px 0;">↓</div>
+                        
+                        <!-- Level 3: Models -->
+                        <div style="background: #f5f5f5; padding: 10px; border-radius: 6px; margin-bottom: 12px;">
+                            <div style="font-size: 10px; color: #666; font-weight: 600; margin-bottom: 6px;">MODELS</div>
+                            <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px;">
+                                <div style="background: white; padding: 8px; border-radius: 4px; border: 1px solid #e0e0e0;">
+                                    <div style="font-size: 10px; color: #999;">Nova 2</div>
+                                    <div style="font-size: 13px; font-weight: 600;">$${(sttSpend * 0.5).toLocaleString('en-US', { maximumFractionDigits: 0 })}</div>
+                                </div>
+                                <div style="background: white; padding: 8px; border-radius: 4px; border: 1px solid #e0e0e0;">
+                                    <div style="font-size: 10px; color: #999;">Nova 3</div>
+                                    <div style="font-size: 13px; font-weight: 600;">$${(sttSpend * 0.3).toLocaleString('en-US', { maximumFractionDigits: 0 })}</div>
+                                </div>
+                                <div style="background: white; padding: 8px; border-radius: 4px; border: 1px solid #e0e0e0;">
+                                    <div style="font-size: 10px; color: #999;">Flux</div>
+                                    <div style="font-size: 13px; font-weight: 600;">$${(sttSpend * 0.2).toLocaleString('en-US', { maximumFractionDigits: 0 })}</div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- Arrow -->
+                        <div style="text-align: center; color: #999; font-size: 20px; margin: -6px 0;">↓</div>
+                        
+                        <!-- Level 4: Features (Only Paid/Used Features Shown) -->
+                        <div style="background: #f5f5f5; padding: 10px; border-radius: 6px;">
+                            <div style="font-size: 10px; color: #666; font-weight: 600; margin-bottom: 6px;">PAID FEATURES (when used)</div>
+                            <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px;">
+                                <!-- Top Row - Most Common Features -->
+                                <div style="background: white; padding: 8px; border-radius: 4px; border: 1px solid #e0e0e0;">
+                                    <div style="font-size: 9px; color: #999;">streaming::diarize</div>
+                                    <div style="font-size: 12px; font-weight: 600;">$${(sttSpend * 0.20).toLocaleString('en-US', { maximumFractionDigits: 0 })}</div>
+                                    <div style="font-size: 8px; color: #1976D2;">$0.12/hr</div>
+                                </div>
+                                <div style="background: white; padding: 8px; border-radius: 4px; border: 1px solid #e0e0e0;">
+                                    <div style="font-size: 9px; color: #999;">keyterm</div>
+                                    <div style="font-size: 12px; font-weight: 600;">$${(sttSpend * 0.15).toLocaleString('en-US', { maximumFractionDigits: 0 })}</div>
+                                    <div style="font-size: 8px; color: #1976D2;">$0.08/hr</div>
+                                </div>
+                                <div style="background: white; padding: 8px; border-radius: 4px; border: 1px solid #e0e0e0;">
+                                    <div style="font-size: 9px; color: #999;">detect_entities</div>
+                                    <div style="font-size: 12px; font-weight: 600;">$${(sttSpend * 0.08).toLocaleString('en-US', { maximumFractionDigits: 0 })}</div>
+                                    <div style="font-size: 8px; color: #1976D2;">$0.05/hr</div>
+                                </div>
+                                
+                                <!-- Bottom Row - Additional Features -->
+                                <div style="background: white; padding: 8px; border-radius: 4px; border: 1px solid #e0e0e0;">
+                                    <div style="font-size: 9px; color: #999;">batch nova 3 multi</div>
+                                    <div style="font-size: 12px; font-weight: 600;">$${(sttSpend * 0.07).toLocaleString('en-US', { maximumFractionDigits: 0 })}</div>
+                                    <div style="font-size: 8px; color: #1976D2;">$0.05/hr</div>
+                                </div>
+                                <div style="background: white; padding: 8px; border-radius: 4px; border: 1px solid #e0e0e0;">
+                                    <div style="font-size: 9px; color: #999;">stream nova 3 multi</div>
+                                    <div style="font-size: 12px; font-weight: 600;">$${(sttSpend * 0.10).toLocaleString('en-US', { maximumFractionDigits: 0 })}</div>
+                                    <div style="font-size: 8px; color: #1976D2;">$0.09/hr</div>
+                                </div>
+                                <div style="background: white; padding: 8px; border-radius: 4px; border: 1px solid #e0e0e0;">
+                                    <div style="font-size: 9px; color: #999;">redact</div>
+                                    <div style="font-size: 12px; font-weight: 600;">$${(sttSpend * 0.02).toLocaleString('en-US', { maximumFractionDigits: 0 })}</div>
+                                    <div style="font-size: 8px; color: #1976D2;">$0.01/hr</div>
+                                </div>
+                            </div>
+                            
+                            <!-- Intelligence Features (if used) -->
+                            <div style="margin-top: 10px; padding-top: 10px; border-top: 1px solid #e0e0e0;">
+                                <div style="font-size: 10px; color: #666; font-weight: 600; margin-bottom: 6px;">INTELLIGENCE FEATURES (LLM/Tokens)</div>
+                                <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px;">
+                                    <div style="background: white; padding: 8px; border-radius: 4px; border: 1px solid #e0e0e0;">
+                                        <div style="font-size: 9px; color: #999;">Intents (Sync)</div>
+                                        <div style="font-size: 12px; font-weight: 600;">$${(sttSpend * 0.05).toLocaleString('en-US', { maximumFractionDigits: 0 })}</div>
+                                        <div style="font-size: 8px; color: #999;">In: $0.00024 Out: $0.00048</div>
+                                    </div>
+                                    <div style="background: white; padding: 8px; border-radius: 4px; border: 1px solid #e0e0e0;">
+                                        <div style="font-size: 9px; color: #999;">Sentiment (Sync)</div>
+                                        <div style="font-size: 12px; font-weight: 600;">$${(sttSpend * 0.04).toLocaleString('en-US', { maximumFractionDigits: 0 })}</div>
+                                        <div style="font-size: 8px; color: #999;">In: $0.00024 Out: $0.00048</div>
+                                    </div>
+                                    <div style="background: white; padding: 8px; border-radius: 4px; border: 1px solid #e0e0e0;">
+                                        <div style="font-size: 9px; color: #999;">Summarize (Sync)</div>
+                                        <div style="font-size: 12px; font-weight: 600;">$${(sttSpend * 0.06).toLocaleString('en-US', { maximumFractionDigits: 0 })}</div>
+                                        <div style="font-size: 8px; color: #999;">In: $0.00024 Out: $0.00048</div>
+                                    </div>
+                                    <div style="background: white; padding: 8px; border-radius: 4px; border: 1px solid #e0e0e0;">
+                                        <div style="font-size: 9px; color: #999;">Topics (Async)</div>
+                                        <div style="font-size: 12px; font-weight: 600;">$${(sttSpend * 0.03).toLocaleString('en-US', { maximumFractionDigits: 0 })}</div>
+                                        <div style="font-size: 8px; color: #999;">In: $0.0003 Out: $0.0006</div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }
+            
+            // TTS Breakdown
+            if (customer.products.some(p => p.includes('TTS'))) {
+                const ttsSpend = totalConsumed * 0.3;
+                const batchTTS = ttsSpend * 0.45;
+                const streamingTTS = ttsSpend * 0.55;
+                
+                html += `
+                    <div style="background: white; padding: 15px; border-radius: 8px; margin-bottom: 10px; border-left: 4px solid #c2185b;">
+                        <!-- Level 1: Total TTS Spend -->
+                        <div style="background: linear-gradient(135deg, #c2185b 0%, #ad1457 100%); color: white; padding: 12px; border-radius: 6px; text-align: center; margin-bottom: 12px;">
+                            <div style="font-size: 11px; opacity: 0.9;">🔊 TOTAL TTS SPEND</div>
+                            <div style="font-size: 20px; font-weight: 700;">$${ttsSpend.toLocaleString('en-US', { maximumFractionDigits: 0 })}</div>
+                        </div>
+                        
+                        <!-- Arrow -->
+                        <div style="text-align: center; color: #999; font-size: 20px; margin: -6px 0;">↓</div>
+                        
+                        <!-- Level 2: Batch vs Streaming -->
+                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 12px;">
+                            <div style="background: #fce4ec; padding: 12px; border-radius: 6px; border: 2px solid #c2185b;">
+                                <div style="font-size: 10px; color: #c2185b; font-weight: 600; margin-bottom: 4px;">BATCH (REST)</div>
+                                <div style="font-size: 16px; font-weight: 700; color: #c2185b; margin-bottom: 8px;">$${batchTTS.toLocaleString('en-US', { maximumFractionDigits: 0 })}</div>
+                                <div style="font-size: 9px; color: #999; margin-bottom: 4px;">45% of TTS | /1k chars</div>
+                            </div>
+                            <div style="background: #fce4ec; padding: 12px; border-radius: 6px; border: 2px solid #c2185b;">
+                                <div style="font-size: 10px; color: #c2185b; font-weight: 600; margin-bottom: 4px;">STREAMING</div>
+                                <div style="font-size: 16px; font-weight: 700; color: #c2185b; margin-bottom: 8px;">$${streamingTTS.toLocaleString('en-US', { maximumFractionDigits: 0 })}</div>
+                                <div style="font-size: 9px; color: #999; margin-bottom: 4px;">55% of TTS</div>
+                            </div>
+                        </div>
+                        
+                        <!-- Arrow -->
+                        <div style="text-align: center; color: #999; font-size: 20px; margin: -6px 0;">↓</div>
+                        
+                        <!-- Level 3: Models -->
+                        <div style="background: #f5f5f5; padding: 10px; border-radius: 6px;">
+                            <div style="font-size: 10px; color: #666; font-weight: 600; margin-bottom: 6px;">MODELS</div>
+                            <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px;">
+                                <div style="background: white; padding: 8px; border-radius: 4px; border: 1px solid #e0e0e0;">
+                                    <div style="font-size: 10px; color: #999;">Batch Aura</div>
+                                    <div style="font-size: 13px; font-weight: 600;">$${(ttsSpend * 0.25).toLocaleString('en-US', { maximumFractionDigits: 0 })}</div>
+                                    <div style="font-size: 8px; color: #c2185b;">$0.013/1k chars</div>
+                                </div>
+                                <div style="background: white; padding: 8px; border-radius: 4px; border: 1px solid #e0e0e0;">
+                                    <div style="font-size: 10px; color: #999;">Streaming Aura</div>
+                                    <div style="font-size: 13px; font-weight: 600;">$${(ttsSpend * 0.35).toLocaleString('en-US', { maximumFractionDigits: 0 })}</div>
+                                    <div style="font-size: 8px; color: #c2185b;">$0.015/1k chars</div>
+                                </div>
+                                <div style="background: white; padding: 8px; border-radius: 4px; border: 1px solid #e0e0e0;">
+                                    <div style="font-size: 10px; color: #999;">Batch Aura 2</div>
+                                    <div style="font-size: 13px; font-weight: 600;">$${(ttsSpend * 0.20).toLocaleString('en-US', { maximumFractionDigits: 0 })}</div>
+                                    <div style="font-size: 8px; color: #c2185b;">$0.03/1k chars</div>
+                                </div>
+                                <div style="background: white; padding: 8px; border-radius: 4px; border: 1px solid #e0e0e0;">
+                                    <div style="font-size: 10px; color: #999;">Streaming Aura 2</div>
+                                    <div style="font-size: 13px; font-weight: 600;">$${(ttsSpend * 0.20).toLocaleString('en-US', { maximumFractionDigits: 0 })}</div>
+                                    <div style="font-size: 8px; color: #c2185b;">$0.03/1k chars</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }
+            
+            // Voice Agent API Breakdown
+            if (customer.products.some(p => p.includes('Voice Agent'))) {
+                const voiceSpend = totalConsumed * 0.3;
+                
+                html += `
+                    <div style="background: white; padding: 15px; border-radius: 8px; margin-bottom: 10px; border-left: 4px solid #7b1fa2;">
+                        <!-- Level 1: Total Voice Agent Spend -->
+                        <div style="background: linear-gradient(135deg, #7b1fa2 0%, #6a1b9a 100%); color: white; padding: 12px; border-radius: 6px; text-align: center; margin-bottom: 12px;">
+                            <div style="font-size: 11px; opacity: 0.9;">🤖 TOTAL VOICE AGENT SPEND</div>
+                            <div style="font-size: 20px; font-weight: 700;">$${voiceSpend.toLocaleString('en-US', { maximumFractionDigits: 0 })}</div>
+                            <div style="font-size: 9px; opacity: 0.8; margin-top: 4px;">/hr pricing</div>
+                        </div>
+                        
+                        <!-- Arrow -->
+                        <div style="text-align: center; color: #999; font-size: 20px; margin: -6px 0;">↓</div>
+                        
+                        <!-- Level 2: Configuration Options -->
+                        <div style="background: #f5f5f5; padding: 10px; border-radius: 6px;">
+                            <div style="font-size: 10px; color: #666; font-weight: 600; margin-bottom: 6px;">MODELS & VOICES (per hour)</div>
+                            <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px;">
+                                <div style="background: white; padding: 8px; border-radius: 4px; border: 1px solid #e0e0e0;">
+                                    <div style="font-size: 9px; color: #999;">Standard LLM / Built-in TTS</div>
+                                    <div style="font-size: 12px; font-weight: 600;">$${(voiceSpend * 0.30).toLocaleString('en-US', { maximumFractionDigits: 0 })}</div>
+                                    <div style="font-size: 8px; color: #7b1fa2;">$4.50/hr</div>
+                                </div>
+                                <div style="background: white; padding: 8px; border-radius: 4px; border: 1px solid #e0e0e0;">
+                                    <div style="font-size: 9px; color: #999;">Standard LLM / Custom TTS</div>
+                                    <div style="font-size: 12px; font-weight: 600;">$${(voiceSpend * 0.25).toLocaleString('en-US', { maximumFractionDigits: 0 })}</div>
+                                    <div style="font-size: 8px; color: #7b1fa2;">$3.38/hr</div>
+                                </div>
+                                <div style="background: white; padding: 8px; border-radius: 4px; border: 1px solid #e0e0e0;">
+                                    <div style="font-size: 9px; color: #999;">Advanced LLM / Built-in TTS</div>
+                                    <div style="font-size: 12px; font-weight: 600;">$${(voiceSpend * 0.20).toLocaleString('en-US', { maximumFractionDigits: 0 })}</div>
+                                    <div style="font-size: 8px; color: #7b1fa2;">$9.75/hr</div>
+                                </div>
+                                <div style="background: white; padding: 8px; border-radius: 4px; border: 1px solid #e0e0e0;">
+                                    <div style="font-size: 9px; color: #999;">Custom LLM / Built-in TTS</div>
+                                    <div style="font-size: 12px; font-weight: 600;">$${(voiceSpend * 0.15).toLocaleString('en-US', { maximumFractionDigits: 0 })}</div>
+                                    <div style="font-size: 8px; color: #7b1fa2;">$3.90/hr</div>
+                                </div>
+                                <div style="background: white; padding: 8px; border-radius: 4px; border: 1px solid #e0e0e0;">
+                                    <div style="font-size: 9px; color: #999;">Custom LLM / Custom TTS</div>
+                                    <div style="font-size: 12px; font-weight: 600;">$${(voiceSpend * 0.10).toLocaleString('en-US', { maximumFractionDigits: 0 })}</div>
+                                    <div style="font-size: 8px; color: #7b1fa2;">$2.70/hr</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }
+            
+            */
+            
+            // Historical + Projected Chart
+            html += `
+                <h4 style="margin: 12px 0 8px 0; font-size: 13px; color: #333;">📈 Historical & Projected Usage</h4>
+                <div style="background: white; padding: 12px; border-radius: 8px;">
+                    <canvas id="customerDetailChart" style="max-height: 220px;"></canvas>
+                </div>
+            `;
+            
+            container.innerHTML = html;
+            
+            // Render the detailed chart
+            renderCustomerDetailChart(customer, months, historicalData, projectedData);
+        }
+        
+        function renderCustomerDetailChart(customer, months, historicalData, projectedData) {
+            const existingChart = Chart.getChart('customerDetailChart');
+            if (existingChart) {
+                existingChart.destroy();
+            }
+            
+            const ctx = document.getElementById('customerDetailChart');
+            if (!ctx) return;
+            
+            // Calculate zero date index
+            const startDate = new Date(customer.startDate);
+            const totalConsumed = customer.startingCredits - customer.creditsRemaining;
+            const daysSinceStart = Math.max(1, (new Date() - startDate) / (1000 * 60 * 60 * 24));
+            const dailyBurnRate = totalConsumed / daysSinceStart;
+            const daysUntilZero = customer.creditsRemaining / dailyBurnRate;
+            
+            const zeroDate = new Date();
+            zeroDate.setDate(zeroDate.getDate() + daysUntilZero);
+            
+            // Find which month index the zero date falls in
+            let zeroDateIndex = -1;
+            months.forEach((month, idx) => {
+                const monthDate = new Date();
+                monthDate.setMonth(monthDate.getMonth() + (idx - 6));
+                if (zeroDate.getMonth() === monthDate.getMonth() && 
+                    zeroDate.getFullYear() === monthDate.getFullYear()) {
+                    zeroDateIndex = idx;
+                }
+            });
+            
+            new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: months,
+                    datasets: [
+                        {
+                            label: 'Historical Usage',
+                            data: historicalData,
+                            borderColor: '#4caf50',
+                            backgroundColor: '#4caf50',
+                            borderWidth: 3,
+                            tension: 0.3,
+                            fill: false,
+                            pointRadius: 4,
+                            pointBackgroundColor: '#4caf50'
+                        },
+                        {
+                            label: 'Projected Usage',
+                            data: projectedData,
+                            borderColor: '#ff9800',
+                            backgroundColor: '#ff9800',
+                            borderWidth: 3,
+                            borderDash: [5, 5],
+                            tension: 0.3,
+                            fill: false,
+                            pointRadius: 4,
+                            pointBackgroundColor: '#ff9800'
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            position: 'top',
+                            labels: { font: { size: 11 } }
+                        },
+                        tooltip: {
+                            callbacks: {
+                                label: function(context) {
+                                    return context.dataset.label + ': $' + context.parsed.y.toLocaleString('en-US', { maximumFractionDigits: 0 });
+                                }
+                            }
+                        },
+                        annotation: {
+                            annotations: zeroDateIndex >= 0 ? {
+                                zeroLine: {
+                                    type: 'line',
+                                    xMin: zeroDateIndex,
+                                    xMax: zeroDateIndex,
+                                    borderColor: '#dc3545',
+                                    borderWidth: 3,
+                                    borderDash: [10, 5],
+                                    label: {
+                                        display: true,
+                                        content: '🚨 ZERO DATE: ' + zeroDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+                                        position: 'start',
+                                        backgroundColor: '#dc3545',
+                                        color: 'white',
+                                        font: { size: 11, weight: 'bold' },
+                                        padding: 6
+                                    }
+                                }
+                            } : {}
+                        }
+                    },
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            title: { display: true, text: 'Usage ($)' },
+                            ticks: {
+                                callback: function(value) {
+                                    return '$' + value.toLocaleString();
+                                }
+                            }
+                        },
+                        x: {
+                            title: { display: true, text: 'Month' },
+                            grid: {
+                                color: function(context) {
+                                    if (context.index === zeroDateIndex) {
+                                        return '#dc3545';
+                                    }
+                                    return '#e0e0e0';
+                                },
+                                lineWidth: function(context) {
+                                    if (context.index === zeroDateIndex) {
+                                        return 2;
+                                    }
+                                    return 1;
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+        }
+        
         function initUsageChart() {
             if (trendsChart) {
                 trendsChart.destroy();
@@ -1490,32 +2842,34 @@
                 '#4db6ac', '#aed581'
             ];
             
-            const datasets = customers.filter((c, i) => selectedCustomers.has(i)).map((customer, index) => {
-                // Generate realistic usage data based on credits consumed
-                const totalConsumed = customer.startingCredits - customer.creditsRemaining;
-                const avgMonthlyUsage = totalConsumed / 12; // Rough average
-                
-                // Create data with some variation
-                const data = dates.map(() => {
-                    const variation = (Math.random() - 0.5) * 0.4; // ±20% variation
-                    const baseValue = avgMonthlyUsage * 0.001; // Convert to hours (rough estimate)
-                    return Math.max(0, baseValue * (1 + variation));
-                });
-                
-                return {
-                    label: customer.name,
-                    data: data,
-                    borderColor: colors[index % colors.length],
-                    backgroundColor: 'transparent',
-                    borderWidth: 2,
-                    tension: 0.4,
-                    pointRadius: 2,
-                    pointHoverRadius: 5,
-                    pointBackgroundColor: colors[index % colors.length],
-                    pointBorderColor: '#fff',
-                    pointBorderWidth: 2
-                };
+            // Only show selected customer
+            const customer = customers[selectedCustomer];
+            if (!customer) return;
+            
+            // Generate realistic usage data based on credits consumed
+            const totalConsumed = customer.startingCredits - customer.creditsRemaining;
+            const avgMonthlyUsage = totalConsumed / 12; // Rough average
+            
+            // Create data with some variation
+            const data = dates.map(() => {
+                const variation = (Math.random() - 0.5) * 0.4; // ±20% variation
+                const baseValue = avgMonthlyUsage * 0.001; // Convert to hours (rough estimate)
+                return Math.max(0, baseValue * (1 + variation));
             });
+            
+            const datasets = [{
+                label: customer.name,
+                data: data,
+                borderColor: '#667eea',
+                backgroundColor: 'transparent',
+                borderWidth: 3,
+                tension: 0.4,
+                pointRadius: 3,
+                pointHoverRadius: 6,
+                pointBackgroundColor: '#667eea',
+                pointBorderColor: '#fff',
+                pointBorderWidth: 2
+            }];
             
             trendsChart = new Chart(ctx, {
                 type: 'line',
@@ -1527,35 +2881,19 @@
                     responsive: true,
                     maintainAspectRatio: false,
                     interaction: {
-                        mode: 'index',
+                        mode: 'nearest',
                         intersect: false,
                     },
                     plugins: {
                         legend: {
-                            position: 'right',
+                            display: true,
+                            position: 'top',
                             labels: {
-                                boxWidth: 12,
-                                padding: 8,
-                                font: {
-                                    size: 11
-                                },
-                                usePointStyle: true,
-                                pointStyle: 'circle'
+                                font: { size: 14, weight: 'bold' }
                             }
                         },
                         tooltip: {
-                            mode: 'index',
-                            intersect: false,
-                            callbacks: {
-                                label: function(context) {
-                                    let label = context.dataset.label || '';
-                                    if (label) {
-                                        label += ': ';
-                                    }
-                                    label += context.parsed.y.toFixed(2) + ' hours';
-                                    return label;
-                                }
-                            }
+                            enabled: false
                         },
                         title: {
                             display: false
@@ -1770,6 +3108,7 @@
         // Map functionality
         let map = null;
         let markers = [];
+        let mapFilters = { green: true, yellow: true, red: true };
         
         // Location coordinates mapping (approximate)
         const locationCoords = {
@@ -1792,9 +3131,27 @@
             'Colorado': [39.5501, -105.7821]
         };
         
+        function toggleMapFilter(color) {
+            mapFilters[color] = !mapFilters[color];
+            
+            // Update button appearance
+            const button = document.getElementById('filter' + color.charAt(0).toUpperCase() + color.slice(1));
+            if (mapFilters[color]) {
+                button.textContent = '✓ ' + button.textContent.replace('✗ ', '').replace('✓ ', '');
+                button.style.opacity = '1';
+            } else {
+                button.textContent = '✗ ' + button.textContent.replace('✓ ', '').replace('✗ ', '');
+                button.style.opacity = '0.5';
+            }
+            
+            // Re-render markers
+            renderMapMarkers();
+        }
+        
         function initMap() {
             if (map) {
                 map.invalidateSize();
+                renderMapMarkers();
                 return;
             }
             
@@ -1807,35 +3164,68 @@
                 maxZoom: 18
             }).addTo(map);
             
+            renderMapMarkers();
+        }
+        
+        function renderMapMarkers() {
+            // Clear existing markers
+            markers.forEach(marker => map.removeLayer(marker));
+            markers = [];
+            
             // Add markers for each customer
             customers.forEach(customer => {
                 const coords = locationCoords[customer.location];
                 if (coords) {
                     const pct = (customer.creditsRemaining / customer.startingCredits) * 100;
-                    let markerColor = 'green';
-                    if (pct < 25) markerColor = 'red';
-                    else if (pct < 50) markerColor = 'orange';
                     
-                    // Create custom icon
+                    // Use exact same color logic as customer table % column
+                    let markerColor = '#155724'; // Green (status-green text color)
+                    let markerBg = '#d4edda'; // Green background
+                    let statusType = 'green';
+                    
+                    if (pct < 25) {
+                        markerColor = '#721c24'; // Red (status-red text color)
+                        markerBg = '#f8d7da'; // Red background
+                        statusType = 'red';
+                    } else if (pct < 50) {
+                        markerColor = '#856404'; // Yellow (status-yellow text color)
+                        markerBg = '#fff3cd'; // Yellow background
+                        statusType = 'yellow';
+                    }
+                    
+                    // Check if this status is filtered
+                    if (!mapFilters[statusType]) {
+                        return; // Skip this marker
+                    }
+                    
+                    // Create custom icon with border matching table colors
                     const icon = L.divIcon({
                         className: 'custom-marker',
-                        html: `<div style="background: ${markerColor}; width: 12px; height: 12px; border-radius: 50%; border: 2px solid white; box-shadow: 0 2px 4px rgba(0,0,0,0.3);"></div>`,
-                        iconSize: [12, 12],
-                        iconAnchor: [6, 6]
+                        html: `<div style="background: ${markerColor}; width: 14px; height: 14px; border-radius: 50%; border: 3px solid ${markerBg}; box-shadow: 0 2px 6px rgba(0,0,0,0.4);"></div>`,
+                        iconSize: [14, 14],
+                        iconAnchor: [7, 7]
                     });
                     
                     const marker = L.marker(coords, { icon: icon }).addTo(map);
                     
-                    // Create popup content
+                    // Create popup content with color-coded percentage matching table
+                    let statusBadgeClass = 'background: #d4edda; color: #155724;'; // Green
+                    if (pct < 25) statusBadgeClass = 'background: #f8d7da; color: #721c24;'; // Red
+                    else if (pct < 50) statusBadgeClass = 'background: #fff3cd; color: #856404;'; // Yellow
+                    
                     const popupContent = `
                         <div class="popup-title">${customer.name}</div>
+                        <div class="popup-info">👤 ${customer.accountOwner || 'Unassigned'}</div>
                         <div class="popup-info">📍 ${customer.location}</div>
                         <div class="popup-info">💼 ${customer.useCase}</div>
                         <div class="popup-info">📦 ${customer.products.slice(0, 2).join(', ')}${customer.products.length > 2 ? '...' : ''}</div>
-                        <div class="popup-credits" style="color: ${markerColor};">
-                            ${pct.toFixed(0)}% Credits Remaining<br>
-                            <small>$${customer.creditsRemaining.toLocaleString()} / $${customer.startingCredits.toLocaleString()}</small>
+                        <div style="margin-top: 10px; padding: 8px; border-radius: 4px; ${statusBadgeClass} font-weight: 600; text-align: center;">
+                            ${pct.toFixed(0)}% Credits Remaining
                         </div>
+                        <div style="font-size: 11px; color: #666; margin-top: 6px; text-align: center;">
+                            $${customer.creditsRemaining.toLocaleString()} / $${customer.startingCredits.toLocaleString()}
+                        </div>
+                        ${customer.arr ? `<div style="font-size: 11px; color: #999; margin-top: 4px; text-align: center;">ARR: $${customer.arr.toLocaleString()}</div>` : ''}
                     `;
                     
                     marker.bindPopup(popupContent);
@@ -1849,6 +3239,22 @@
         renderTable();
         renderProspectTable();
         updateStats();
+        updateDataOwnerInfo();
+        
+        function updateDataOwnerInfo() {
+            const owner = localStorage.getItem('dataOwner') || 'Demo Data';
+            const customerCount = customers.length;
+            const prospectCount = prospects.length;
+            document.getElementById('dataOwner').textContent = `📊 ${owner} | ${customerCount} customers, ${prospectCount} prospects`;
+        }
+        
+        function setDataOwner() {
+            const name = prompt('Enter your name (for this dataset):');
+            if (name) {
+                localStorage.setItem('dataOwner', name);
+                updateDataOwnerInfo();
+            }
+        }
         
         // Add click handlers to sortable headers
         document.querySelectorAll('th.sortable').forEach(th => {
